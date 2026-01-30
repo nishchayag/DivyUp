@@ -13,7 +13,7 @@ import { updateGroupSchema } from "@/lib/validations";
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   const session = await getServerSession(authOptions);
 
@@ -39,7 +39,7 @@ export async function GET(
   }
 
   const isMember = (group.members as any[]).some(
-    (m) => m._id.toString() === user._id.toString()
+    (m) => m._id.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -68,7 +68,7 @@ export async function GET(
  */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   const session = await getServerSession(authOptions);
 
@@ -99,7 +99,7 @@ export async function PATCH(
   if (group.creator.toString() !== user._id.toString()) {
     return NextResponse.json(
       { error: "Only the group creator can edit group details" },
-      { status: 403 }
+      { status: 403 },
     );
   }
 
@@ -122,7 +122,7 @@ export async function PATCH(
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   const session = await getServerSession(authOptions);
 
@@ -146,7 +146,7 @@ export async function DELETE(
   if (group.creator.toString() !== user._id.toString()) {
     return NextResponse.json(
       { error: "Only the group creator can delete the group" },
-      { status: 403 }
+      { status: 403 },
     );
   }
 

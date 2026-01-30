@@ -5,16 +5,28 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import ExpenseList from "@/components/ExpenseList";
 import AddExpenseModal from "@/components/AddExpenseModal";
+import SettleUpModal from "@/components/SettleUpModal";
 import { GroupDetailSkeleton } from "@/components/Skeleton";
 import { NoExpensesEmpty, BalancesSettledEmpty } from "@/components/EmptyState";
-import { calculateNetBalances, settleDebts } from "@/utils/calcBalances";
+import {
+  calculateNetBalances,
+  settleDebts,
+  SettlementLike,
+} from "@/utils/calcBalances";
 import { useToast } from "@/components/Toast";
+import Avatar from "@/components/Avatar";
 
 interface Member {
   _id: string;
   name: string;
   email: string;
   image?: string;
+}
+
+interface SplitDetail {
+  user: string; // User ID (not populated)
+  amount?: number;
+  percentage?: number;
 }
 
 interface Expense {
@@ -24,6 +36,19 @@ interface Expense {
   createdAt: string;
   paidBy: Member;
   splitBetween: Member[];
+  splitType?: "equal" | "exact" | "percentage";
+  splitDetails?: SplitDetail[];
+  category?: string;
+  expenseDate?: string;
+}
+
+interface Settlement {
+  _id: string;
+  paidBy: Member;
+  paidTo: Member;
+  amount: number;
+  note?: string;
+  settledAt: string;
 }
 
 interface Group {
@@ -39,8 +64,10 @@ export default function GroupPage({ params }: { params: { id: string } }) {
   const { showToast } = useToast();
   const [group, setGroup] = useState<Group | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [showSettleModal, setShowSettleModal] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviting, setInviting] = useState(false);
@@ -62,8 +89,21 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     }
   };
 
+  const fetchSettlements = async () => {
+    try {
+      const res = await fetch(`/api/groups/${params.id}/settlements`);
+      if (res.ok) {
+        const data = await res.json();
+        setSettlements(data.settlements || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch settlements:", err);
+    }
+  };
+
   useEffect(() => {
     fetchGroup();
+    fetchSettlements();
   }, [params.id]);
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -152,15 +192,30 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     );
   }
 
-  // Calculate balances
+  // Calculate balances (including settlements)
   const expensesForCalc = expenses.map((e) => ({
     amount: e.amount,
     paidBy: e.paidBy._id,
     splitBetween: e.splitBetween.map((m) => m._id),
+    splitType: e.splitType,
+    splitDetails: e.splitDetails?.map((d) => ({
+      user: d.user, // Already a string ID (not populated)
+      amount: d.amount,
+      percentage: d.percentage,
+    })),
+  }));
+  const settlementsForCalc: SettlementLike[] = settlements.map((s) => ({
+    paidBy: s.paidBy._id,
+    paidTo: s.paidTo._id,
+    amount: s.amount,
   }));
   const memberIds = group.members.map((m) => m._id);
-  const netBalances = calculateNetBalances(expensesForCalc, memberIds);
-  const settlements = settleDebts(netBalances);
+  const netBalances = calculateNetBalances(
+    expensesForCalc,
+    memberIds,
+    settlementsForCalc,
+  );
+  const suggestedSettlements = settleDebts(netBalances);
 
   const getMemberName = (id: string) =>
     group.members.find((m) => m._id === id)?.name || "Unknown";
@@ -217,17 +272,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
               key={m._id}
               className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-700 rounded-full"
             >
-              {m.image ? (
-                <img
-                  src={m.image}
-                  alt={m.name}
-                  className="w-6 h-6 rounded-full"
-                />
-              ) : (
-                <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs">
-                  {m.name[0]?.toUpperCase()}
-                </div>
-              )}
+              <Avatar name={m.name} image={m.image} size="sm" />
               <span className="text-sm text-gray-700 dark:text-gray-300">
                 {m.name}
               </span>
@@ -241,35 +286,84 @@ export default function GroupPage({ params }: { params: { id: string } }) {
 
       {/* Balances Summary */}
       <div className="mb-6 p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
-        <h3 className="font-semibold text-gray-900 dark:text-white mb-3">
-          Balances
-        </h3>
-        {settlements.length === 0 ? (
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="font-semibold text-gray-900 dark:text-white">
+            Balances
+          </h3>
+          {suggestedSettlements.length > 0 && (
+            <button
+              onClick={() => setShowSettleModal(true)}
+              className="text-sm bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+            >
+              Settle Up
+            </button>
+          )}
+        </div>
+        {suggestedSettlements.length === 0 ? (
           <BalancesSettledEmpty />
         ) : (
           <div className="space-y-2">
-            {settlements.map((s, i) => (
+            {suggestedSettlements.map((s, i) => (
               <div
                 key={i}
                 className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0"
               >
-                <div className="text-sm">
+                <div className="flex items-center gap-2 text-sm">
+                  <Avatar
+                    name={getMemberName(s.from)}
+                    image={group.members.find((m) => m._id === s.from)?.image}
+                    size="sm"
+                  />
                   <span className="text-red-600 dark:text-red-400 font-medium">
                     {getMemberName(s.from)}
                   </span>
-                  <span className="text-gray-500 dark:text-gray-400">
-                    {" "}
-                    owes{" "}
-                  </span>
+                  <span className="text-gray-500 dark:text-gray-400">owes</span>
+                  <Avatar
+                    name={getMemberName(s.to)}
+                    image={group.members.find((m) => m._id === s.to)?.image}
+                    size="sm"
+                  />
                   <span className="text-green-600 dark:text-green-400 font-medium">
                     {getMemberName(s.to)}
                   </span>
                 </div>
                 <span className="font-semibold text-gray-900 dark:text-white">
-                  ${s.amount.toFixed(2)}
+                  ₹{s.amount.toFixed(2)}
                 </span>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Settlement History */}
+        {settlements.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Recent Payments
+            </h4>
+            <div className="space-y-2">
+              {settlements.slice(0, 5).map((s) => (
+                <div
+                  key={s._id}
+                  className="flex items-center justify-between py-1.5 text-sm text-gray-600 dark:text-gray-400"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-green-600 dark:text-green-400">
+                      ✓
+                    </span>
+                    <span>{s.paidBy.name}</span>
+                    <span>paid</span>
+                    <span>{s.paidTo.name}</span>
+                    {s.note && (
+                      <span className="text-gray-400 dark:text-gray-500">
+                        ({s.note})
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-medium">₹{s.amount.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -304,6 +398,20 @@ export default function GroupPage({ params }: { params: { id: string } }) {
           onSuccess={() => {
             fetchGroup();
             showToast("Expense added!", "success");
+          }}
+        />
+      )}
+
+      {/* Settle Up Modal */}
+      {showSettleModal && (
+        <SettleUpModal
+          groupId={group._id}
+          members={group.members}
+          settlements={suggestedSettlements}
+          onClose={() => setShowSettleModal(false)}
+          onSuccess={() => {
+            fetchSettlements();
+            showToast("Payment recorded!", "success");
           }}
         />
       )}
