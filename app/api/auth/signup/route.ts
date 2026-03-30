@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import dbConnect from "@/lib/mongoose";
 import User from "@/models/User";
 import { signUpSchema } from "@/lib/validations";
+import { ensureOrganizationForUser } from "@/lib/tenant";
 
 /**
  * POST /api/auth/signup
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
     if (existingUser) {
       return NextResponse.json(
         { error: "An account with this email already exists" },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
@@ -44,6 +45,8 @@ export async function POST(req: NextRequest) {
       passwordHash,
     });
 
+    const organization = await ensureOrganizationForUser(user);
+
     return NextResponse.json(
       {
         message: "Account created successfully",
@@ -52,14 +55,18 @@ export async function POST(req: NextRequest) {
           name: user.name,
           email: user.email,
         },
+        organization: {
+          id: organization._id.toString(),
+          name: organization.name,
+        },
       },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (error: any) {
     console.error("Signup error:", error);
     return NextResponse.json(
       { error: "Failed to create account" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

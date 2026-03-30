@@ -6,6 +6,9 @@ import Expense from "@/models/Expense";
 import Group from "@/models/Group";
 import User from "@/models/User";
 import { updateExpenseSchema } from "@/lib/validations";
+import { enforceRateLimit } from "@/lib/rateLimit";
+import { resolveTenantContext } from "@/lib/tenant";
+import { logAuditEvent } from "@/lib/audit";
 
 /**
  * GET /api/expenses/[id]
@@ -13,8 +16,17 @@ import { updateExpenseSchema } from "@/lib/validations";
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "expenses:read",
+    max: 180,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -22,6 +34,14 @@ export async function GET(
   }
 
   await dbConnect();
+
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
 
   const expense = await Expense.findById(params.id)
     .populate("paidBy", "name email image")
@@ -44,8 +64,12 @@ export async function GET(
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
 
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const isMember = group.members.some(
-    (m: any) => m.toString() === user._id.toString()
+    (m: any) => m.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -61,8 +85,17 @@ export async function GET(
  */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "expenses:update",
+    max: 100,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -76,11 +109,19 @@ export async function PATCH(
   if (!result.success) {
     return NextResponse.json(
       { error: result.error.flatten().fieldErrors },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   await dbConnect();
+
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
 
   const expense = await Expense.findById(params.id);
   if (!expense) {
@@ -98,8 +139,12 @@ export async function PATCH(
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
 
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const isMember = group.members.some(
-    (m: any) => m.toString() === user._id.toString()
+    (m: any) => m.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -116,6 +161,13 @@ export async function PATCH(
 
   await expense.save();
 
+  await logAuditEvent(req, ctx, {
+    action: "expense.updated",
+    entityType: "expense",
+    entityId: expense._id.toString(),
+    metadata: { groupId: group._id.toString() },
+  });
+
   const updatedExpense = await Expense.findById(params.id)
     .populate("paidBy", "name email image")
     .populate("splitBetween", "name email image")
@@ -130,8 +182,17 @@ export async function PATCH(
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "expenses:delete",
+    max: 60,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -139,6 +200,14 @@ export async function DELETE(
   }
 
   await dbConnect();
+
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
 
   const expense = await Expense.findById(params.id);
   if (!expense) {
@@ -156,8 +225,12 @@ export async function DELETE(
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
 
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const isMember = group.members.some(
-    (m: any) => m.toString() === user._id.toString()
+    (m: any) => m.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -165,6 +238,13 @@ export async function DELETE(
   }
 
   await Expense.findByIdAndDelete(params.id);
+
+  await logAuditEvent(req, ctx, {
+    action: "expense.deleted",
+    entityType: "expense",
+    entityId: params.id,
+    metadata: { groupId: group._id.toString() },
+  });
 
   return NextResponse.json({ message: "Expense deleted successfully" });
 }

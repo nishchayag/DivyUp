@@ -10,42 +10,54 @@ export default function Navbar() {
   const [showDropdown, setShowDropdown] = useState(false);
 
   return (
-    <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-100 dark:border-gray-700">
-      <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+    <header className="sticky top-0 z-40 border-b border-slate-200/60 dark:border-slate-700/60 bg-white/75 dark:bg-slate-900/65 backdrop-blur-xl">
+      <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
         <Link
           href="/"
-          className="text-xl font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors"
+          className="inline-flex items-center gap-2 text-slate-900 dark:text-slate-100"
         >
-          DivyUp
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-blue-700 text-white text-sm font-bold shadow-lg shadow-sky-600/30">
+            DU
+          </span>
+          <span className="font-display text-xl font-bold tracking-tight">
+            DivyUp
+          </span>
         </Link>
 
         <nav className="flex items-center gap-4">
+          <Link
+            href="/pricing"
+            className="hidden sm:inline text-sm text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
+          >
+            Pricing
+          </Link>
+
           <ThemeToggle />
 
           {status === "loading" ? (
-            <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse" />
+            <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse" />
           ) : session?.user ? (
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
-                className="flex items-center gap-2 p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                className="flex items-center gap-2 p-1 pr-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-800/70 hover:bg-white dark:hover:bg-slate-800 transition-colors"
               >
                 {session.user.image ? (
                   <img
                     src={session.user.image}
                     alt={session.user.name || "User"}
-                    className="w-8 h-8 rounded-full"
+                    className="w-8 h-8 rounded-lg"
                   />
                 ) : (
-                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-medium">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center text-white text-sm font-medium">
                     {session.user.name?.[0]?.toUpperCase() || "U"}
                   </div>
                 )}
-                <span className="text-sm text-gray-700 dark:text-gray-300 hidden sm:inline">
+                <span className="text-sm text-slate-700 dark:text-slate-300 hidden sm:inline max-w-28 truncate">
                   {session.user.name}
                 </span>
                 <svg
-                  className="w-4 h-4 text-gray-500"
+                  className="w-4 h-4 text-slate-500"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -65,36 +77,52 @@ export default function Navbar() {
                     className="fixed inset-0 z-10"
                     onClick={() => setShowDropdown(false)}
                   />
-                  <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-100 dark:border-gray-700 py-1 z-20">
-                    <div className="px-4 py-2 border-b border-gray-100 dark:border-gray-700">
-                      <p className="text-sm font-medium text-gray-900 dark:text-white">
+                  <div className="absolute right-0 mt-2 w-56 surface-card rounded-xl shadow-xl py-1 z-20">
+                    <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+                      <p className="text-sm font-medium text-slate-900 dark:text-white">
                         {session.user.name}
                       </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                         {session.user.email}
                       </p>
                     </div>
                     <Link
                       href="/"
                       onClick={() => setShowDropdown(false)}
-                      className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
                     >
                       Dashboard
                     </Link>
                     <Link
                       href="/groups/new"
                       onClick={() => setShowDropdown(false)}
-                      className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
                     >
                       New Group
                     </Link>
-                    <hr className="my-1 border-gray-100 dark:border-gray-700" />
+                    <Link
+                      href="/settings"
+                      onClick={() => setShowDropdown(false)}
+                      className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    >
+                      Settings & Billing
+                    </Link>
+                    {(session.user as any).isPlatformAdmin && (
+                      <Link
+                        href="/admin"
+                        onClick={() => setShowDropdown(false)}
+                        className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                      >
+                        Admin Dashboard
+                      </Link>
+                    )}
+                    <hr className="my-1 border-slate-200 dark:border-slate-700" />
                     <button
                       onClick={() => {
                         setShowDropdown(false);
                         signOut({ callbackUrl: "/auth/signin" });
                       }}
-                      className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700"
                     >
                       Sign out
                     </button>
@@ -106,13 +134,13 @@ export default function Navbar() {
             <div className="flex items-center gap-2">
               <Link
                 href="/auth/signin"
-                className="text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                className="text-sm text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
               >
                 Sign in
               </Link>
               <Link
                 href="/auth/signup"
-                className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+                className="brand-button text-sm px-4 py-2 rounded-lg"
               >
                 Sign up
               </Link>

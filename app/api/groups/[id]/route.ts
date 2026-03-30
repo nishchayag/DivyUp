@@ -6,6 +6,9 @@ import Group from "@/models/Group";
 import Expense from "@/models/Expense";
 import User from "@/models/User";
 import { updateGroupSchema } from "@/lib/validations";
+import { enforceRateLimit } from "@/lib/rateLimit";
+import { hasRequiredRole, resolveTenantContext } from "@/lib/tenant";
+import { logAuditEvent } from "@/lib/audit";
 
 /**
  * GET /api/groups/[id]
@@ -13,8 +16,17 @@ import { updateGroupSchema } from "@/lib/validations";
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "groups:read",
+    max: 120,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -23,12 +35,26 @@ export async function GET(
 
   await dbConnect();
 
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
+
   const group = await Group.findById(params.id)
     .populate("members", "name email image")
     .lean();
 
   if (!group) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
+  }
+
+  if (
+    (group as any).organization?.toString() !== ctx.organization._id.toString()
+  ) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   // Check membership
@@ -39,7 +65,7 @@ export async function GET(
   }
 
   const isMember = (group.members as any[]).some(
-    (m) => m._id.toString() === user._id.toString()
+    (m) => m._id.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -68,8 +94,17 @@ export async function GET(
  */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "groups:update",
+    max: 40,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -85,6 +120,14 @@ export async function PATCH(
 
   await dbConnect();
 
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
+
   const group = await Group.findById(params.id);
   if (!group) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
@@ -95,11 +138,18 @@ export async function PATCH(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  // Only creator can update group details
-  if (group.creator.toString() !== user._id.toString()) {
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Allow creator, owner, or admin to update group metadata
+  if (
+    group.creator.toString() !== user._id.toString() &&
+    !hasRequiredRole(ctx.membership.role, ["admin"])
+  ) {
     return NextResponse.json(
-      { error: "Only the group creator can edit group details" },
-      { status: 403 }
+      { error: "Only admins or the group creator can edit group details" },
+      { status: 403 },
     );
   }
 
@@ -108,6 +158,13 @@ export async function PATCH(
   if (description !== undefined) group.description = description;
 
   await group.save();
+
+  await logAuditEvent(req, ctx, {
+    action: "group.updated",
+    entityType: "group",
+    entityId: group._id.toString(),
+    metadata: { name: group.name },
+  });
 
   const updatedGroup = await Group.findById(params.id)
     .populate("members", "name email image")
@@ -122,8 +179,17 @@ export async function PATCH(
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "groups:delete",
+    max: 20,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -131,6 +197,14 @@ export async function DELETE(
   }
 
   await dbConnect();
+
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
 
   const group = await Group.findById(params.id);
   if (!group) {
@@ -142,11 +216,18 @@ export async function DELETE(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  // Only creator can delete group
-  if (group.creator.toString() !== user._id.toString()) {
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Only creator/owner can delete group
+  if (
+    group.creator.toString() !== user._id.toString() &&
+    !hasRequiredRole(ctx.membership.role, ["owner"])
+  ) {
     return NextResponse.json(
-      { error: "Only the group creator can delete the group" },
-      { status: 403 }
+      { error: "Only the group creator or owner can delete the group" },
+      { status: 403 },
     );
   }
 
@@ -155,6 +236,12 @@ export async function DELETE(
 
   // Delete the group
   await Group.findByIdAndDelete(params.id);
+
+  await logAuditEvent(req, ctx, {
+    action: "group.deleted",
+    entityType: "group",
+    entityId: params.id,
+  });
 
   return NextResponse.json({ message: "Group deleted successfully" });
 }

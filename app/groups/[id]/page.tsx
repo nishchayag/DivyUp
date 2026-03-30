@@ -191,6 +191,12 @@ export default function GroupPage({ params }: { params: { id: string } }) {
           )}
         </div>
         <div className="flex gap-2">
+          <a
+            href={`/api/groups/${params.id}/export`}
+            className="text-sm px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+          >
+            Export CSV
+          </a>
           <button
             onClick={() => setShowInvite(true)}
             className="text-sm px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"

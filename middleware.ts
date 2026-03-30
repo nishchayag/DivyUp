@@ -17,14 +17,16 @@ export default withAuth(
         // Public routes that don't require authentication
         const publicRoutes = [
           "/", // Landing page
+          "/pricing",
           "/auth/signin",
           "/auth/signup",
           "/api/auth",
+          "/api/billing/webhook",
         ];
 
         // Check if current path is public (exact match for "/" or startsWith for others)
         const isPublicRoute = publicRoutes.some((route) =>
-          route === "/" ? pathname === "/" : pathname.startsWith(route)
+          route === "/" ? pathname === "/" : pathname.startsWith(route),
         );
 
         if (isPublicRoute) {
@@ -35,7 +37,7 @@ export default withAuth(
         return !!token;
       },
     },
-  }
+  },
 );
 
 export const config = {

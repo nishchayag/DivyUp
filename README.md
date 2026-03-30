@@ -23,6 +23,13 @@ A modern, full-stack expense splitting application built with Next.js 14, TypeSc
 - � **Protected Routes**: Middleware-based authentication
 - ✅ **Form Validation**: Zod schemas for type-safe validation
 - 👥 **Member Management**: Invite/remove members from groups
+- 🏢 **Workspaces & Roles**: Organization-based tenancy with owner/admin/member roles
+- 📦 **Plan Limits**: Free and Pro limits for groups, members, and monthly expenses
+- 🧾 **Audit Logs**: Security and compliance trail for critical mutating actions
+- 📤 **CSV Export**: Download group expenses as CSV reports
+- 🛡️ **API Hardening**: Request rate limiting and stricter payload validation
+- 💳 **Billing Ready**: Checkout and billing portal endpoints plus webhook subscription sync
+- 📈 **Admin Analytics**: Platform-level metrics endpoint and dashboard page
 
 ## Tech Stack
 
@@ -62,6 +69,16 @@ NEXTAUTH_URL=http://localhost:3000
 # GitHub OAuth (optional)
 GITHUB_ID=your-github-client-id
 GITHUB_SECRET=your-github-client-secret
+
+# Billing links
+STRIPE_CHECKOUT_LINK=https://checkout.stripe.com/...
+STRIPE_BILLING_PORTAL_LINK=https://billing.stripe.com/...
+
+# Billing webhook secret (for /api/billing/webhook)
+BILLING_WEBHOOK_SECRET=your-webhook-secret
+
+# Optional platform admin emails
+ADMIN_EMAILS=admin@example.com
 ```
 
 ### 3. Run the development server
@@ -157,6 +174,18 @@ DivyUp/
 | GET    | `/api/expenses/[id]` | Get expense    |
 | PATCH  | `/api/expenses/[id]` | Update expense |
 | DELETE | `/api/expenses/[id]` | Delete expense |
+
+### SaaS & Ops
+
+| Method | Endpoint                 | Description                             |
+| ------ | ------------------------ | --------------------------------------- |
+| GET    | `/api/tenant`            | Current user/org/subscription context   |
+| POST   | `/api/billing/checkout`  | Returns checkout URL for plan upgrade   |
+| POST   | `/api/billing/portal`    | Returns billing portal URL              |
+| POST   | `/api/billing/webhook`   | Sync subscription state from webhooks   |
+| GET    | `/api/groups/[id]/export`| Export group expenses as CSV            |
+| GET    | `/api/audit`             | Audit events (admin/owner role required)|
+| GET    | `/api/admin/metrics`     | Platform metrics (platform admin only)  |
 
 ## Balance Calculation
 
