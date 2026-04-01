@@ -13,8 +13,10 @@ export type ExpenseLike = {
   amount: number;
   paidBy: string;
   splitBetween: string[];
-  splitMode?: "equal" | "percentage";
+  splitMode?: "equal" | "percentage" | "fixed" | "itemized";
   splitShares?: { userId: string; percentage: number }[];
+  fixedShares?: { userId: string; amount: number }[];
+  itemizedShares?: { label: string; amount: number; assignedTo: string[] }[];
 };
 
 /**
@@ -45,7 +47,7 @@ export function calculateNetBalances(
       net[payerId] = amount;
     }
 
-    // Each participant owes by equal or percentage mode.
+    // Each participant owes by configured split mode.
     if (expense.splitMode === "percentage" && expense.splitShares?.length) {
       for (const share of expense.splitShares) {
         const userId = String(share.userId || "");
@@ -55,6 +57,37 @@ export function calculateNetBalances(
           net[userId] -= owed;
         } else {
           net[userId] = -owed;
+        }
+      }
+    } else if (expense.splitMode === "fixed" && expense.fixedShares?.length) {
+      for (const share of expense.fixedShares) {
+        const userId = String(share.userId || "");
+        if (!userId) continue;
+        const owed = Number(share.amount || 0);
+        if (owed <= 0) continue;
+        if (net[userId] !== undefined) {
+          net[userId] -= owed;
+        } else {
+          net[userId] = -owed;
+        }
+      }
+    } else if (
+      expense.splitMode === "itemized" &&
+      expense.itemizedShares?.length
+    ) {
+      for (const item of expense.itemizedShares) {
+        const itemAmount = Number(item.amount || 0);
+        const participants = (item.assignedTo || [])
+          .map((id) => String(id || ""))
+          .filter(Boolean);
+        if (itemAmount <= 0 || participants.length === 0) continue;
+        const owedPerMember = itemAmount / participants.length;
+        for (const userId of participants) {
+          if (net[userId] !== undefined) {
+            net[userId] -= owedPerMember;
+          } else {
+            net[userId] = -owedPerMember;
+          }
         }
       }
     } else {

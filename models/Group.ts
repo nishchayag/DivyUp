@@ -4,6 +4,10 @@ export interface IGroup extends Document {
   name: string;
   description?: string;
   currency: string;
+  monthlyBudget?: number;
+  isArchived: boolean;
+  archivedAt?: Date;
+  expensePermission: "all" | "admins";
   organization: Types.ObjectId;
   members: Types.ObjectId[];
   creator: Types.ObjectId;
@@ -19,6 +23,15 @@ const GroupSchema = new Schema<IGroup>(
       type: String,
       enum: ["USD", "EUR", "GBP", "INR", "CAD", "AUD", "JPY"],
       default: "USD",
+      required: true,
+    },
+    monthlyBudget: { type: Number, min: 0 },
+    isArchived: { type: Boolean, default: false, index: true },
+    archivedAt: { type: Date },
+    expensePermission: {
+      type: String,
+      enum: ["all", "admins"],
+      default: "all",
       required: true,
     },
     organization: {

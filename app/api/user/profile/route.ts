@@ -14,8 +14,13 @@ export async function PATCH(req: NextRequest) {
   const body = await req.json();
   const parsed = updateProfileSchema.safeParse(body);
   if (!parsed.success) {
-    const firstError = Object.values(parsed.error.flatten().fieldErrors)[0]?.[0];
-    return NextResponse.json({ error: firstError || "Invalid input" }, { status: 400 });
+    const firstError = Object.values(
+      parsed.error.flatten().fieldErrors,
+    )[0]?.[0];
+    return NextResponse.json(
+      { error: firstError || "Invalid input" },
+      { status: 400 },
+    );
   }
 
   await dbConnect();
@@ -30,6 +35,9 @@ export async function PATCH(req: NextRequest) {
   if (parsed.data.image !== undefined) {
     user.image = parsed.data.image;
   }
+  if (parsed.data.preferredCurrency !== undefined) {
+    user.preferredCurrency = parsed.data.preferredCurrency;
+  }
 
   await user.save();
 
@@ -39,6 +47,7 @@ export async function PATCH(req: NextRequest) {
       name: user.name,
       email: user.email,
       image: user.image,
+      preferredCurrency: user.preferredCurrency || "USD",
     },
   });
 }

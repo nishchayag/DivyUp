@@ -8,8 +8,15 @@ export interface IExpense extends Document {
   notes?: string;
   paidBy: Types.ObjectId;
   splitBetween: Types.ObjectId[];
-  splitMode: "equal" | "percentage";
+  splitMode: "equal" | "percentage" | "fixed" | "itemized";
+  splitPreset?: "equal" | "60_40" | "70_30" | "custom";
   splitShares?: { userId: Types.ObjectId; percentage: number }[];
+  fixedShares?: { userId: Types.ObjectId; amount: number }[];
+  itemizedShares?: {
+    label: string;
+    amount: number;
+    assignedTo: Types.ObjectId[];
+  }[];
   group: Types.ObjectId;
   status: "open" | "settled";
   settledAt?: Date;
@@ -17,6 +24,8 @@ export interface IExpense extends Document {
     enabled: boolean;
     frequency: "weekly" | "monthly";
     nextRunAt?: Date;
+    templateName?: string;
+    autoApprove?: boolean;
   };
   payments: {
     amount: number;
@@ -51,14 +60,34 @@ const ExpenseSchema = new Schema<IExpense>(
     ],
     splitMode: {
       type: String,
-      enum: ["equal", "percentage"],
+      enum: ["equal", "percentage", "fixed", "itemized"],
       default: "equal",
       required: true,
+    },
+    splitPreset: {
+      type: String,
+      enum: ["equal", "60_40", "70_30", "custom"],
+      default: "custom",
     },
     splitShares: [
       {
         userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
         percentage: { type: Number, required: true },
+      },
+    ],
+    fixedShares: [
+      {
+        userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+        amount: { type: Number, required: true },
+      },
+    ],
+    itemizedShares: [
+      {
+        label: { type: String, required: true },
+        amount: { type: Number, required: true },
+        assignedTo: [
+          { type: Schema.Types.ObjectId, ref: "User", required: true },
+        ],
       },
     ],
     group: { type: Schema.Types.ObjectId, ref: "Group", required: true },
@@ -73,6 +102,8 @@ const ExpenseSchema = new Schema<IExpense>(
       enabled: { type: Boolean, default: false },
       frequency: { type: String, enum: ["weekly", "monthly"] },
       nextRunAt: { type: Date },
+      templateName: { type: String },
+      autoApprove: { type: Boolean, default: false },
     },
     payments: [
       {

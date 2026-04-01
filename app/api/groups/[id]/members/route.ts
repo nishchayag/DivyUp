@@ -73,6 +73,13 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  if (group.isArchived) {
+    return NextResponse.json(
+      { error: "Group is archived. Unarchive it to manage members." },
+      { status: 400 },
+    );
+  }
+
   // Check if current user is a member (only members can add others)
   const currentUser = await User.findOne({ email: session.user.email });
   if (!currentUser) {
@@ -87,7 +94,8 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!hasRequiredRole(ctx.membership.role, ["admin"])) {
+  const isCreator = group.creator.toString() === currentUser._id.toString();
+  if (!isCreator && !hasRequiredRole(ctx.membership.role, ["admin"])) {
     return NextResponse.json(
       { error: "Only owners/admins can add members" },
       { status: 403 },

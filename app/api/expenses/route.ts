@@ -50,8 +50,12 @@ export async function POST(req: NextRequest) {
     paidById,
     splitBetweenIds,
     splitMode,
+    splitPreset,
     splitShares,
+    fixedShares,
+    itemizedShares,
     recurrence,
+    bulkCreate,
     category,
     notes,
     groupId,
@@ -103,8 +107,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Create expense
-  const expense = await Expense.create({
+  if (group.isArchived) {
+    return NextResponse.json(
+      { error: "Group is archived. Unarchive it to add expenses." },
+      { status: 400 },
+    );
+  }
+
+  const firstDay = new Date();
+  firstDay.setDate(1);
+  firstDay.setHours(0, 0, 0, 0);
+
+  if (group.monthlyBudget && group.monthlyBudget > 0) {
+    const monthExpenses = await Expense.find({
+      group: groupId,
+      createdAt: { $gte: firstDay },
+      status: { $ne: "settled" },
+    }).select("amount");
+    const monthTotal = monthExpenses.reduce(
+      (sum, e) => sum + (Number(e.amount) || 0),
+      0,
+    );
+    if (monthTotal + amount > group.monthlyBudget) {
+      return NextResponse.json(
+        {
+          error: `Monthly budget exceeded: ${monthTotal + amount} > ${group.monthlyBudget}`,
+        },
+        { status: 400 },
+      );
+    }
+  }
+
+  const createPayload = {
     title,
     amount,
     currency: currency || group.currency || "USD",
@@ -113,7 +147,10 @@ export async function POST(req: NextRequest) {
     paidBy: paidById,
     splitBetween: splitBetweenIds,
     splitMode,
+    splitPreset: splitPreset || "custom",
     splitShares,
+    fixedShares,
+    itemizedShares,
     recurrence: recurrence?.enabled
       ? {
           enabled: true,
@@ -121,10 +158,27 @@ export async function POST(req: NextRequest) {
           nextRunAt: recurrence.nextRunAt
             ? new Date(recurrence.nextRunAt)
             : undefined,
+          templateName: recurrence.templateName,
+          autoApprove: recurrence.autoApprove ?? false,
         }
       : { enabled: false },
     group: groupId,
-  });
+  };
+
+  // Bulk create support for recurring templates / mass entry
+  let expense;
+  if (bulkCreate?.count && bulkCreate.count > 1) {
+    const intervalDays = bulkCreate.intervalDays || 1;
+    const docs = Array.from({ length: bulkCreate.count }).map((_, index) => {
+      const createdAt = new Date();
+      createdAt.setDate(createdAt.getDate() + index * intervalDays);
+      return { ...createPayload, createdAt, updatedAt: createdAt };
+    });
+    const created = await Expense.insertMany(docs);
+    expense = created[0];
+  } else {
+    expense = await Expense.create(createPayload);
+  }
 
   await logAuditEvent(req, ctx, {
     action: "expense.created",

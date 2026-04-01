@@ -9,7 +9,11 @@ import AddExpenseModal from "@/components/AddExpenseModal";
 import { GroupDetailSkeleton } from "@/components/Skeleton";
 import { NoExpensesEmpty, BalancesSettledEmpty } from "@/components/EmptyState";
 import { calculateNetBalances, settleDebts } from "@/utils/calcBalances";
-import { formatCurrency, SUPPORTED_CURRENCIES } from "@/utils/currency";
+import {
+  convertCurrency,
+  formatCurrency,
+  SUPPORTED_CURRENCIES,
+} from "@/utils/currency";
 import { useToast } from "@/components/Toast";
 import GroupCharts from "@/components/GroupCharts";
 
@@ -28,8 +32,11 @@ interface Expense {
   category?: string;
   notes?: string;
   status?: "open" | "settled";
-  splitMode?: "equal" | "percentage";
+  splitMode?: "equal" | "percentage" | "fixed" | "itemized";
+  splitPreset?: "equal" | "60_40" | "70_30" | "custom";
   splitShares?: { userId: string; percentage: number }[];
+  fixedShares?: { userId: string; amount: number }[];
+  itemizedShares?: { label: string; amount: number; assignedTo: string[] }[];
   createdAt: string;
   settledAt?: string;
   paidBy: Member;
@@ -41,6 +48,10 @@ interface Group {
   name: string;
   description?: string;
   currency?: string;
+  monthlyBudget?: number;
+  monthlySpent?: number;
+  isArchived?: boolean;
+  expensePermission?: "all" | "admins";
   members: Member[];
   creator: string;
 }
@@ -57,6 +68,14 @@ export default function GroupPage({ params }: { params: { id: string } }) {
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState("");
   const [savingCurrency, setSavingCurrency] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [budgetDraft, setBudgetDraft] = useState("");
+  const [logQuery, setLogQuery] = useState("");
+  const [logStatusFilter, setLogStatusFilter] = useState<
+    "all" | "open" | "settled"
+  >("all");
+  const [logPayerFilter, setLogPayerFilter] = useState("all");
+  const [logPage, setLogPage] = useState(1);
 
   const fetchGroup = useCallback(async () => {
     try {
@@ -66,6 +85,9 @@ export default function GroupPage({ params }: { params: { id: string } }) {
       }
       const data = await res.json();
       setGroup(data.group);
+      setBudgetDraft(
+        data.group?.monthlyBudget ? String(data.group.monthlyBudget) : "",
+      );
       setExpenses(data.expenses || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load group");
@@ -206,6 +228,33 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     }
   };
 
+  const handleGroupSettingsUpdate = async (
+    payload: Record<string, unknown>,
+  ) => {
+    if (!group) return;
+    setSavingSettings(true);
+    try {
+      const res = await fetch(`/api/groups/${group._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update group settings");
+      }
+      setGroup(data.group);
+      showToast("Group settings updated", "success");
+    } catch (err: unknown) {
+      showToast(
+        err instanceof Error ? err.message : "Failed to update group settings",
+        "error",
+      );
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
   if (loading) {
     return <GroupDetailSkeleton />;
   }
@@ -229,30 +278,45 @@ export default function GroupPage({ params }: { params: { id: string } }) {
   // Calculate balances from uncleared expenses only.
   const toId = (value: unknown) => String(value ?? "");
   const currency = group.currency || "USD";
-  const balanceExpenses = expenses.filter(
-    (e) => e.status !== "settled" && (!e.currency || e.currency === currency),
-  );
-  const excludedFromBalances =
-    expenses.filter((e) => e.status !== "settled").length -
-    balanceExpenses.length;
-  const expensesForCalc = balanceExpenses
-    .map((e) => ({
-      amount: e.amount,
-      paidBy: toId(e.paidBy?._id),
-      splitBetween: e.splitBetween.map((m) => toId(m._id)),
-      splitMode: e.splitMode,
-      splitShares: e.splitShares?.map((share) => ({
-        userId: toId(share.userId),
-        percentage: share.percentage,
-      })),
-    }));
+  const balanceExpenses = expenses.filter((e) => e.status !== "settled");
+  const expensesForCalc = balanceExpenses.map((e) => ({
+    amount:
+      e.currency && e.currency !== currency
+        ? convertCurrency(e.amount, e.currency, currency)
+        : e.amount,
+    paidBy: toId(e.paidBy?._id),
+    splitBetween: e.splitBetween.map((m) => toId(m._id)),
+    splitMode: e.splitMode,
+    splitPreset: e.splitPreset,
+    splitShares: e.splitShares?.map((share) => ({
+      userId: toId(share.userId),
+      percentage: share.percentage,
+    })),
+    fixedShares: e.fixedShares?.map((share) => ({
+      userId: toId(share.userId),
+      amount:
+        e.currency && e.currency !== currency
+          ? convertCurrency(share.amount, e.currency, currency)
+          : share.amount,
+    })),
+    itemizedShares: e.itemizedShares?.map((item) => ({
+      label: item.label,
+      amount:
+        e.currency && e.currency !== currency
+          ? convertCurrency(item.amount, e.currency, currency)
+          : item.amount,
+      assignedTo: item.assignedTo.map((id) => toId(id)),
+    })),
+  }));
   const memberIds = group.members.map((m) => toId(m._id));
   const netBalances = calculateNetBalances(expensesForCalc, memberIds);
   const settlements = settleDebts(netBalances);
   const currentUserId = session?.user?.id;
   const isCreator = group.creator === currentUserId;
   const canReviewBalances =
-    isCreator || session?.user?.role === "admin" || session?.user?.role === "owner";
+    isCreator ||
+    session?.user?.role === "admin" ||
+    session?.user?.role === "owner";
   const memberNetBalances = group.members
     .map((member) => ({
       ...member,
@@ -269,6 +333,52 @@ export default function GroupPage({ params }: { params: { id: string } }) {
 
   const getMemberName = (id: string) =>
     group.members.find((m) => m._id === id)?.name || "Unknown";
+
+  const sortedLogs = expenses
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  const filteredLogs = sortedLogs.filter((expense) => {
+    const matchesStatus =
+      logStatusFilter === "all" ||
+      (logStatusFilter === "open"
+        ? expense.status !== "settled"
+        : expense.status === "settled");
+
+    const payerName = expense.paidBy?.name || "Unknown";
+    const matchesPayer =
+      logPayerFilter === "all" || payerName === logPayerFilter;
+
+    const query = logQuery.trim().toLowerCase();
+    const matchesQuery =
+      query.length === 0 ||
+      expense.title.toLowerCase().includes(query) ||
+      (expense.notes || "").toLowerCase().includes(query) ||
+      (expense.category || "").toLowerCase().includes(query);
+
+    return matchesStatus && matchesPayer && matchesQuery;
+  });
+
+  const logsPerPage = 10;
+  const totalLogPages = Math.max(
+    1,
+    Math.ceil(filteredLogs.length / logsPerPage),
+  );
+  const safeLogPage = Math.min(logPage, totalLogPages);
+  const paginatedLogs = filteredLogs.slice(
+    (safeLogPage - 1) * logsPerPage,
+    safeLogPage * logsPerPage,
+  );
+
+  const uniquePayers = Array.from(
+    new Set(sortedLogs.map((expense) => expense.paidBy?.name || "Unknown")),
+  ).sort((a, b) => a.localeCompare(b));
+
+  useEffect(() => {
+    setLogPage(1);
+  }, [logQuery, logStatusFilter, logPayerFilter]);
 
   return (
     <div className="space-y-6">
@@ -295,16 +405,28 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             <span className="text-xs rounded-full px-2 py-1 bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
               {group.members.length} members
             </span>
+            {group.isArchived && (
+              <span className="text-xs rounded-full px-2 py-1 bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                Archived
+              </span>
+            )}
           </div>
           {group.description && (
             <p className="text-slate-600 dark:text-slate-300 mt-2">
               {group.description}
             </p>
           )}
+          {typeof group.monthlyBudget === "number" && (
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Budget: {formatCurrency(group.monthlyBudget, currency)} | Spent
+              this month: {formatCurrency(group.monthlySpent || 0, currency)}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {canReviewBalances && (
             <select
+              aria-label="Group currency"
               value={currency}
               disabled={savingCurrency}
               onChange={(e) => handleCurrencyChange(e.target.value)}
@@ -316,6 +438,39 @@ export default function GroupPage({ params }: { params: { id: string } }) {
                 </option>
               ))}
             </select>
+          )}
+          {canReviewBalances && (
+            <span className="text-xs px-3 py-2 border border-emerald-200 dark:border-emerald-700 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300">
+              Expense access: All group members
+            </span>
+          )}
+          {canReviewBalances && (
+            <input
+              aria-label="Monthly budget"
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="Monthly budget"
+              value={budgetDraft}
+              onChange={(e) => setBudgetDraft(e.target.value)}
+              onBlur={() =>
+                handleGroupSettingsUpdate({
+                  monthlyBudget: budgetDraft ? Number(budgetDraft) : 0,
+                })
+              }
+              className="text-sm px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 w-40"
+            />
+          )}
+          {canReviewBalances && (
+            <button
+              disabled={savingSettings}
+              onClick={() =>
+                handleGroupSettingsUpdate({ isArchived: !group.isArchived })
+              }
+              className="text-sm px-3 py-2 border border-amber-300 dark:border-amber-700 rounded-xl hover:bg-amber-50 dark:hover:bg-amber-900/20 text-amber-700 dark:text-amber-300"
+            >
+              {group.isArchived ? "Unarchive" : "Archive"}
+            </button>
           )}
           <a
             href={`/api/groups/${params.id}/export`}
@@ -379,11 +534,6 @@ export default function GroupPage({ params }: { params: { id: string } }) {
         <h3 className="font-display font-semibold text-slate-900 dark:text-white mb-3">
           Balances
         </h3>
-        {excludedFromBalances > 0 && (
-          <p className="mb-3 text-xs text-amber-600 dark:text-amber-400">
-            {excludedFromBalances} open expense(s) in other currencies are excluded from balance math.
-          </p>
-        )}
         {settlements.length === 0 ? (
           <BalancesSettledEmpty />
         ) : (
@@ -473,7 +623,10 @@ export default function GroupPage({ params }: { params: { id: string } }) {
                     {expense.title}
                   </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Settled on {new Date(expense.settledAt || expense.createdAt).toLocaleDateString()}
+                    Settled on{" "}
+                    {new Date(
+                      expense.settledAt || expense.createdAt,
+                    ).toLocaleDateString()}
                   </p>
                 </div>
                 <span className="text-sm font-semibold text-slate-900 dark:text-white">
@@ -481,6 +634,121 @@ export default function GroupPage({ params }: { params: { id: string } }) {
                 </span>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="surface-card rounded-2xl p-5">
+        <h3 className="font-display font-semibold text-slate-900 dark:text-white mb-3">
+          Expense Logs (All)
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
+          <input
+            aria-label="Search expense logs"
+            value={logQuery}
+            onChange={(e) => setLogQuery(e.target.value)}
+            placeholder="Search title, notes, category"
+            className="md:col-span-2 text-sm px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+          />
+          <select
+            aria-label="Filter logs by status"
+            value={logStatusFilter}
+            onChange={(e) =>
+              setLogStatusFilter(
+                e.target.value as "all" | "open" | "settled",
+              )
+            }
+            className="text-sm px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+          >
+            <option value="all">All statuses</option>
+            <option value="open">Open only</option>
+            <option value="settled">Resolved only</option>
+          </select>
+          <select
+            aria-label="Filter logs by payer"
+            value={logPayerFilter}
+            onChange={(e) => setLogPayerFilter(e.target.value)}
+            className="text-sm px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+          >
+            <option value="all">All payers</option>
+            {uniquePayers.map((payer) => (
+              <option key={payer} value={payer}>
+                {payer}
+              </option>
+            ))}
+          </select>
+        </div>
+        {expenses.length === 0 ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No expense logs yet.
+          </p>
+        ) : filteredLogs.length === 0 ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No logs match your filters.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {paginatedLogs.map((expense) => (
+                <div
+                  key={`log-${expense._id}`}
+                  className="flex items-center justify-between py-2 border-b border-slate-200 dark:border-slate-700 last:border-0"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                      {expense.title}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Added by {expense.paidBy?.name || "Unknown"} on{" "}
+                      {new Date(expense.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                      {formatCurrency(
+                        expense.amount,
+                        expense.currency || currency,
+                      )}
+                    </span>
+                    <p
+                      className={`text-xs ${
+                        expense.status === "settled"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-amber-600 dark:text-amber-400"
+                      }`}
+                    >
+                      {expense.status === "settled" ? "Resolved" : "Open"}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            <div className="pt-2 flex items-center justify-between">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Showing {(safeLogPage - 1) * logsPerPage + 1}-
+                {Math.min(safeLogPage * logsPerPage, filteredLogs.length)} of {" "}
+                {filteredLogs.length}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  disabled={safeLogPage === 1}
+                  onClick={() => setLogPage((p) => Math.max(1, p - 1))}
+                  className="text-xs px-2 py-1 border border-slate-300 dark:border-slate-600 rounded disabled:opacity-50"
+                >
+                  Prev
+                </button>
+                <span className="text-xs px-2 py-1 text-slate-500 dark:text-slate-400">
+                  Page {safeLogPage}/{totalLogPages}
+                </span>
+                <button
+                  disabled={safeLogPage >= totalLogPages}
+                  onClick={() =>
+                    setLogPage((p) => Math.min(totalLogPages, p + 1))
+                  }
+                  className="text-xs px-2 py-1 border border-slate-300 dark:border-slate-600 rounded disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -5,6 +5,7 @@ export interface IUser extends Document {
   email: string;
   image?: string;
   passwordHash?: string;
+  preferredCurrency?: "USD" | "EUR" | "GBP" | "INR" | "CAD" | "AUD" | "JPY";
   activeOrganization?: mongoose.Types.ObjectId;
   isPlatformAdmin?: boolean;
   createdAt: Date;
@@ -17,6 +18,11 @@ const UserSchema = new Schema<IUser>(
     email: { type: String, required: true, unique: true, index: true },
     image: { type: String },
     passwordHash: { type: String },
+    preferredCurrency: {
+      type: String,
+      enum: ["USD", "EUR", "GBP", "INR", "CAD", "AUD", "JPY"],
+      default: "USD",
+    },
     activeOrganization: { type: Schema.Types.ObjectId, ref: "Organization" },
     isPlatformAdmin: { type: Boolean, default: false },
   },

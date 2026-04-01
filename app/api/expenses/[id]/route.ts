@@ -163,7 +163,10 @@ export async function PATCH(
     paidById,
     splitBetweenIds,
     splitMode,
+    splitPreset,
     splitShares,
+    fixedShares,
+    itemizedShares,
     category,
     notes,
     status,
@@ -180,8 +183,16 @@ export async function PATCH(
     expense.splitBetween =
       splitBetweenIds as unknown as typeof expense.splitBetween;
   if (splitMode) expense.splitMode = splitMode;
+  if (splitPreset) expense.splitPreset = splitPreset;
   if (splitShares) {
     expense.splitShares = splitShares as unknown as typeof expense.splitShares;
+  }
+  if (fixedShares) {
+    expense.fixedShares = fixedShares as unknown as typeof expense.fixedShares;
+  }
+  if (itemizedShares) {
+    expense.itemizedShares =
+      itemizedShares as unknown as typeof expense.itemizedShares;
   }
   if (recurrence) {
     const resolvedFrequency =
@@ -192,6 +203,8 @@ export async function PATCH(
       nextRunAt: recurrence.nextRunAt
         ? new Date(recurrence.nextRunAt)
         : undefined,
+      templateName: recurrence.templateName,
+      autoApprove: recurrence.autoApprove ?? false,
     };
   }
   if (status) {

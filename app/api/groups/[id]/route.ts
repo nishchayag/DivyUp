@@ -9,6 +9,7 @@ import { updateGroupSchema } from "@/lib/validations";
 import { enforceRateLimit } from "@/lib/rateLimit";
 import { hasRequiredRole, resolveTenantContext } from "@/lib/tenant";
 import { logAuditEvent } from "@/lib/audit";
+import { convertCurrency } from "@/utils/currency";
 
 type IdLike = { toString: () => string };
 
@@ -82,11 +83,31 @@ export async function GET(
     .sort({ createdAt: -1 })
     .lean();
 
+  const groupCurrency = (group as { currency?: string }).currency || "USD";
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const monthlySpent = expenses
+    .filter((e) => new Date(e.createdAt) >= monthStart)
+    .reduce((sum, e) => {
+      const amount =
+        e.currency && e.currency !== groupCurrency
+          ? convertCurrency(e.amount, e.currency, groupCurrency)
+          : e.amount;
+      return sum + amount;
+    }, 0);
+
   // Add creator as string for comparison in frontend
   const groupWithCreator = {
     ...group,
     creator: (group as { creator?: IdLike }).creator?.toString(),
-    currency: (group as { currency?: string }).currency || "USD",
+    currency: groupCurrency,
+    isArchived: !!(group as { isArchived?: boolean }).isArchived,
+    monthlyBudget: (group as { monthlyBudget?: number }).monthlyBudget,
+    expensePermission:
+      (group as { expensePermission?: "all" | "admins" }).expensePermission ||
+      "all",
+    monthlySpent: Math.round((monthlySpent + Number.EPSILON) * 100) / 100,
   };
 
   return NextResponse.json({ group: groupWithCreator, expenses });
@@ -157,10 +178,23 @@ export async function PATCH(
     );
   }
 
-  const { name, description, currency } = result.data;
+  const {
+    name,
+    description,
+    currency,
+    monthlyBudget,
+    expensePermission,
+    isArchived,
+  } = result.data;
   if (name) group.name = name;
   if (description !== undefined) group.description = description;
   if (currency) group.currency = currency;
+  if (monthlyBudget !== undefined) group.monthlyBudget = monthlyBudget;
+  if (expensePermission) group.expensePermission = expensePermission;
+  if (isArchived !== undefined) {
+    group.isArchived = isArchived;
+    group.archivedAt = isArchived ? new Date() : undefined;
+  }
 
   await group.save();
 

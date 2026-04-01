@@ -41,6 +41,8 @@ export const createGroupSchema = z.object({
   currency: z
     .enum(["USD", "EUR", "GBP", "INR", "CAD", "AUD", "JPY"])
     .default("USD"),
+  monthlyBudget: z.number().nonnegative().max(100000000).optional(),
+  expensePermission: z.enum(["all", "admins"]).default("all"),
 });
 
 export const updateGroupSchema = z.object({
@@ -56,6 +58,9 @@ export const updateGroupSchema = z.object({
   currency: z
     .enum(["USD", "EUR", "GBP", "INR", "CAD", "AUD", "JPY"])
     .optional(),
+  monthlyBudget: z.number().nonnegative().max(100000000).optional(),
+  expensePermission: z.enum(["all", "admins"]).optional(),
+  isArchived: z.boolean().optional(),
 });
 
 export type CreateGroupInput = z.infer<typeof createGroupSchema>;
@@ -84,7 +89,10 @@ export const createExpenseSchema = z
     splitBetweenIds: z
       .array(z.string())
       .min(1, "At least one person must be in the split"),
-    splitMode: z.enum(["equal", "percentage"]).default("equal"),
+    splitMode: z
+      .enum(["equal", "percentage", "fixed", "itemized"])
+      .default("equal"),
+    splitPreset: z.enum(["equal", "60_40", "70_30", "custom"]).optional(),
     splitShares: z
       .array(
         z.object({
@@ -93,11 +101,36 @@ export const createExpenseSchema = z
         }),
       )
       .optional(),
+    fixedShares: z
+      .array(
+        z.object({
+          userId: z.string().min(1),
+          amount: z.number().nonnegative(),
+        }),
+      )
+      .optional(),
+    itemizedShares: z
+      .array(
+        z.object({
+          label: z.string().min(1).max(120),
+          amount: z.number().positive(),
+          assignedTo: z.array(z.string().min(1)).min(1),
+        }),
+      )
+      .optional(),
     recurrence: z
       .object({
         enabled: z.boolean().default(false),
         frequency: z.enum(["weekly", "monthly"]).optional(),
         nextRunAt: z.string().datetime().optional(),
+        templateName: z.string().max(80).optional(),
+        autoApprove: z.boolean().optional(),
+      })
+      .optional(),
+    bulkCreate: z
+      .object({
+        count: z.number().int().min(1).max(30),
+        intervalDays: z.number().int().min(1).max(90).optional(),
       })
       .optional(),
     groupId: z.string().min(1, "Group is required"),
@@ -125,6 +158,50 @@ export const createExpenseSchema = z
         });
       }
     }
+
+    if (data.splitMode === "fixed") {
+      if (!data.fixedShares || data.fixedShares.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "fixedShares is required for fixed split mode",
+          path: ["fixedShares"],
+        });
+        return;
+      }
+      const total = data.fixedShares.reduce(
+        (sum, share) => sum + share.amount,
+        0,
+      );
+      if (Math.abs(total - data.amount) > 0.01) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "fixedShares amounts must sum to total amount",
+          path: ["fixedShares"],
+        });
+      }
+    }
+
+    if (data.splitMode === "itemized") {
+      if (!data.itemizedShares || data.itemizedShares.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "itemizedShares is required for itemized split mode",
+          path: ["itemizedShares"],
+        });
+        return;
+      }
+      const total = data.itemizedShares.reduce(
+        (sum, item) => sum + item.amount,
+        0,
+      );
+      if (Math.abs(total - data.amount) > 0.01) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Itemized amounts must sum to total amount",
+          path: ["itemizedShares"],
+        });
+      }
+    }
   });
 
 export const updateExpenseSchema = z.object({
@@ -145,12 +222,30 @@ export const updateExpenseSchema = z.object({
   splitBetweenIds: z.array(z.string()).min(1).optional(),
   category: z.string().max(80).optional(),
   notes: z.string().max(2000).optional(),
-  splitMode: z.enum(["equal", "percentage"]).optional(),
+  splitMode: z.enum(["equal", "percentage", "fixed", "itemized"]).optional(),
+  splitPreset: z.enum(["equal", "60_40", "70_30", "custom"]).optional(),
   splitShares: z
     .array(
       z.object({
         userId: z.string().min(1),
         percentage: z.number().positive().max(100),
+      }),
+    )
+    .optional(),
+  fixedShares: z
+    .array(
+      z.object({
+        userId: z.string().min(1),
+        amount: z.number().nonnegative(),
+      }),
+    )
+    .optional(),
+  itemizedShares: z
+    .array(
+      z.object({
+        label: z.string().min(1).max(120),
+        amount: z.number().positive(),
+        assignedTo: z.array(z.string().min(1)).min(1),
       }),
     )
     .optional(),
@@ -160,6 +255,8 @@ export const updateExpenseSchema = z.object({
       enabled: z.boolean().default(false),
       frequency: z.enum(["weekly", "monthly"]).optional(),
       nextRunAt: z.string().datetime().optional(),
+      templateName: z.string().max(80).optional(),
+      autoApprove: z.boolean().optional(),
     })
     .optional(),
 });
@@ -205,4 +302,7 @@ export const feedbackSchema = z.object({
 export const updateProfileSchema = z.object({
   name: z.string().min(2).max(50).optional(),
   image: z.string().url("Profile image must be a valid URL").optional(),
+  preferredCurrency: z
+    .enum(["USD", "EUR", "GBP", "INR", "CAD", "AUD", "JPY"])
+    .optional(),
 });

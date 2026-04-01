@@ -10,6 +10,7 @@ import { enforceRateLimit } from "@/lib/rateLimit";
 import { checkUsageLimit, resolveTenantContext } from "@/lib/tenant";
 import { logAuditEvent } from "@/lib/audit";
 import { calculateNetBalances } from "@/utils/calcBalances";
+import { convertCurrency } from "@/utils/currency";
 
 /**
  * GET /api/groups
@@ -38,9 +39,11 @@ export async function GET() {
     return NextResponse.json({ groups: [] });
   }
 
+  const includeArchived = false;
   const groups = await Group.find({
     members: user._id,
     organization: ctx.organization._id,
+    ...(includeArchived ? {} : { isArchived: { $ne: true } }),
   })
     .populate("members", "name email image")
     .lean();
@@ -61,13 +64,15 @@ export async function GET() {
 
   const groupsWithBalances = groups.map((group) => {
     const groupCurrency = group.currency || "USD";
-    const memberIds = (group.members as Array<{ _id: { toString: () => string } }>).map((m) =>
-      m._id.toString(),
-    );
-    const calcExpenses = (expensesByGroup.get(group._id.toString()) || [])
-      .filter((e) => !e.currency || e.currency === groupCurrency)
-      .map((e) => ({
-        amount: e.amount,
+    const memberIds = (
+      group.members as Array<{ _id: { toString: () => string } }>
+    ).map((m) => m._id.toString());
+    const calcExpenses = (expensesByGroup.get(group._id.toString()) || []).map(
+      (e) => ({
+        amount:
+          e.currency && e.currency !== groupCurrency
+            ? convertCurrency(e.amount, e.currency, groupCurrency)
+            : e.amount,
         paidBy: e.paidBy.toString(),
         splitBetween: e.splitBetween.map((id) => id.toString()),
         splitMode: e.splitMode,
@@ -75,12 +80,31 @@ export async function GET() {
           userId: share.userId.toString(),
           percentage: share.percentage,
         })),
-      }));
+        fixedShares: e.fixedShares?.map((share) => ({
+          userId: share.userId.toString(),
+          amount:
+            e.currency && e.currency !== groupCurrency
+              ? convertCurrency(share.amount, e.currency, groupCurrency)
+              : share.amount,
+        })),
+        itemizedShares: e.itemizedShares?.map((item) => ({
+          label: item.label,
+          amount:
+            e.currency && e.currency !== groupCurrency
+              ? convertCurrency(item.amount, e.currency, groupCurrency)
+              : item.amount,
+          assignedTo: item.assignedTo.map((id) => id.toString()),
+        })),
+      }),
+    );
     const netMap = calculateNetBalances(calcExpenses, memberIds);
 
     return {
       ...group,
       currency: groupCurrency,
+      monthlyBudget: group.monthlyBudget,
+      isArchived: !!group.isArchived,
+      expensePermission: group.expensePermission || "all",
       netBalance: netMap[user._id.toString()] || 0,
     };
   });
@@ -149,7 +173,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const { name, description, memberEmails, currency } = parsed.data;
+  const {
+    name,
+    description,
+    memberEmails,
+    currency,
+    monthlyBudget,
+    expensePermission,
+  } = parsed.data;
 
   // Start with creator as member
   const members = [creator._id];
@@ -168,6 +199,8 @@ export async function POST(req: NextRequest) {
     name,
     description,
     currency,
+    monthlyBudget,
+    expensePermission,
     organization: ctx.organization._id,
     members,
     creator: creator._id,

@@ -42,15 +42,21 @@ export async function POST(req: NextRequest) {
       paidBy: expense.paidBy,
       splitBetween: expense.splitBetween,
       splitMode: expense.splitMode,
+      splitPreset: expense.splitPreset,
       splitShares: expense.splitShares,
+      fixedShares: expense.fixedShares,
+      itemizedShares: expense.itemizedShares,
       group: expense.group,
-      status: "open",
+      status: expense.recurrence?.autoApprove ? "settled" : "open",
+      settledAt: expense.recurrence?.autoApprove ? new Date() : undefined,
       comments: [],
       payments: [],
       recurrence: {
         enabled: true,
         frequency,
         nextRunAt: nextDate(now, frequency),
+        templateName: expense.recurrence?.templateName,
+        autoApprove: expense.recurrence?.autoApprove ?? false,
       },
     });
 
@@ -58,6 +64,8 @@ export async function POST(req: NextRequest) {
       enabled: true,
       frequency,
       nextRunAt: nextDate(now, frequency),
+      templateName: expense.recurrence?.templateName,
+      autoApprove: expense.recurrence?.autoApprove ?? false,
     };
     await expense.save();
     created += 1;
