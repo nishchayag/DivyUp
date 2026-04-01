@@ -3,6 +3,7 @@ import mongoose, { Schema, Document, Model, Types } from "mongoose";
 export interface IGroup extends Document {
   name: string;
   description?: string;
+  currency: string;
   organization: Types.ObjectId;
   members: Types.ObjectId[];
   creator: Types.ObjectId;
@@ -14,6 +15,12 @@ const GroupSchema = new Schema<IGroup>(
   {
     name: { type: String, required: true },
     description: { type: String },
+    currency: {
+      type: String,
+      enum: ["USD", "EUR", "GBP", "INR", "CAD", "AUD", "JPY"],
+      default: "USD",
+      required: true,
+    },
     organization: {
       type: Schema.Types.ObjectId,
       ref: "Organization",

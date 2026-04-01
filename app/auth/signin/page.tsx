@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { Suspense } from "react";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function SignInPage() {
+function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/";
@@ -35,7 +36,7 @@ export default function SignInPage() {
         router.push(callbackUrl);
         router.refresh();
       }
-    } catch (err) {
+    } catch {
       setErrorMsg("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
@@ -47,19 +48,53 @@ export default function SignInPage() {
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center">
-      <div className="w-full max-w-md p-8 bg-white rounded-xl shadow-lg dark:bg-gray-800">
+    <div className="min-h-[80vh] grid lg:grid-cols-2 gap-6 items-stretch">
+      <section className="hidden lg:flex surface-card rounded-3xl p-10 flex-col justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.22em] text-sky-600 dark:text-sky-400 mb-3">
+            Welcome Back
+          </p>
+          <h1 className="font-display text-4xl font-bold text-slate-900 dark:text-white leading-tight">
+            Continue where your team left off.
+          </h1>
+          <p className="mt-4 text-slate-600 dark:text-slate-300 max-w-md">
+            Check balances, settle faster, and keep every shared expense in one
+            place.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mt-8">
+          <div className="rounded-2xl bg-sky-100/70 dark:bg-sky-900/30 p-4">
+            <p className="text-xs text-slate-500 dark:text-slate-300">
+              Monthly active users
+            </p>
+            <p className="text-2xl font-display font-bold text-slate-900 dark:text-white">
+              18k+
+            </p>
+          </div>
+          <div className="rounded-2xl bg-emerald-100/70 dark:bg-emerald-900/30 p-4">
+            <p className="text-xs text-slate-500 dark:text-slate-300">
+              Avg settle time
+            </p>
+            <p className="text-2xl font-display font-bold text-slate-900 dark:text-white">
+              32 sec
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="w-full max-w-md mx-auto surface-card rounded-3xl p-8 md:p-10 self-center">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          <h1 className="font-display text-3xl font-bold text-slate-900 dark:text-white">
             Welcome back
           </h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-2">
+          <p className="text-slate-600 dark:text-slate-300 mt-2">
             Sign in to your DivyUp account
           </p>
         </div>
 
         {errorMsg && (
-          <div className="mb-4 p-3 bg-red-100 border border-red-300 text-red-700 rounded-lg text-sm">
+          <div className="mb-4 p-3 bg-red-100 border border-red-300 text-red-700 rounded-xl text-sm">
             {errorMsg}
           </div>
         )}
@@ -68,7 +103,7 @@ export default function SignInPage() {
           <div>
             <label
               htmlFor="email"
-              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+              className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1"
             >
               Email
             </label>
@@ -78,7 +113,7 @@ export default function SignInPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-sky-500 focus:border-transparent dark:bg-slate-800 dark:border-slate-600 dark:text-white"
               placeholder="you@example.com"
             />
           </div>
@@ -86,7 +121,7 @@ export default function SignInPage() {
           <div>
             <label
               htmlFor="password"
-              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+              className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1"
             >
               Password
             </label>
@@ -96,7 +131,7 @@ export default function SignInPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-sky-500 focus:border-transparent dark:bg-slate-800 dark:border-slate-600 dark:text-white"
               placeholder="••••••••"
             />
           </div>
@@ -104,23 +139,23 @@ export default function SignInPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full brand-button py-2.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none"
           >
             {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
 
         <div className="my-6 flex items-center">
-          <div className="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
-          <span className="px-4 text-sm text-gray-500 dark:text-gray-400">
+          <div className="flex-1 border-t border-slate-300 dark:border-slate-600"></div>
+          <span className="px-4 text-sm text-slate-500 dark:text-slate-400">
             or
           </span>
-          <div className="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
+          <div className="flex-1 border-t border-slate-300 dark:border-slate-600"></div>
         </div>
 
         <button
           onClick={handleGitHubSignIn}
-          className="w-full py-2 px-4 bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+          className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
         >
           <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
             <path
@@ -132,16 +167,24 @@ export default function SignInPage() {
           Continue with GitHub
         </button>
 
-        <p className="mt-6 text-center text-sm text-gray-600 dark:text-gray-400">
+        <p className="mt-6 text-center text-sm text-slate-600 dark:text-slate-400">
           Don&apos;t have an account?{" "}
           <Link
             href="/auth/signup"
-            className="text-blue-600 hover:text-blue-700 font-medium"
+            className="text-sky-600 hover:text-sky-700 font-medium"
           >
             Sign up
           </Link>
         </p>
-      </div>
+      </section>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-slate-500">Loading sign in...</div>}>
+      <SignInForm />
+    </Suspense>
   );
 }

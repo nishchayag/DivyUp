@@ -13,6 +13,8 @@ export type ExpenseLike = {
   amount: number;
   paidBy: string;
   splitBetween: string[];
+  splitMode?: "equal" | "percentage";
+  splitShares?: { userId: string; percentage: number }[];
 };
 
 /**
@@ -21,7 +23,7 @@ export type ExpenseLike = {
  */
 export function calculateNetBalances(
   expenses: ExpenseLike[],
-  members: string[]
+  members: string[],
 ): Record<string, number> {
   const net: Record<string, number> = {};
 
@@ -29,32 +31,46 @@ export function calculateNetBalances(
   members.forEach((m) => (net[m] = 0));
 
   for (const expense of expenses) {
+    if (!expense) continue;
     const amount = Number(expense.amount || 0);
-    const splitCount =
-      expense.splitBetween && expense.splitBetween.length
-        ? expense.splitBetween.length
-        : members.length;
+    if (amount <= 0) continue;
 
-    const share = amount / splitCount;
+    const payerId = String(expense.paidBy || "");
+    if (!payerId) continue;
 
     // Payer gets credited full amount (they paid)
-    if (net[expense.paidBy] !== undefined) {
-      net[expense.paidBy] += amount;
+    if (net[payerId] !== undefined) {
+      net[payerId] += amount;
     } else {
-      net[expense.paidBy] = amount;
+      net[payerId] = amount;
     }
 
-    // Each participant in the split owes their share
-    const participants =
-      expense.splitBetween && expense.splitBetween.length
-        ? expense.splitBetween
-        : members;
+    // Each participant owes by equal or percentage mode.
+    if (expense.splitMode === "percentage" && expense.splitShares?.length) {
+      for (const share of expense.splitShares) {
+        const userId = String(share.userId || "");
+        if (!userId) continue;
+        const owed = (amount * share.percentage) / 100;
+        if (net[userId] !== undefined) {
+          net[userId] -= owed;
+        } else {
+          net[userId] = -owed;
+        }
+      }
+    } else {
+      const participants =
+        expense.splitBetween && expense.splitBetween.length
+          ? expense.splitBetween.map((id) => String(id || "")).filter(Boolean)
+          : members;
+      if (!participants.length) continue;
+      const share = amount / participants.length;
 
-    for (const userId of participants) {
-      if (net[userId] !== undefined) {
-        net[userId] -= share;
-      } else {
-        net[userId] = -share;
+      for (const userId of participants) {
+        if (net[userId] !== undefined) {
+          net[userId] -= share;
+        } else {
+          net[userId] = -share;
+        }
       }
     }
   }
@@ -73,7 +89,7 @@ export function calculateNetBalances(
  * Negative = this user owes others
  */
 export function simplifiedBalances(
-  netMap: Record<string, number>
+  netMap: Record<string, number>,
 ): { user: string; amount: number }[] {
   return Object.entries(netMap)
     .filter(([, v]) => Math.abs(v) > 0.005)
@@ -85,7 +101,7 @@ export function simplifiedBalances(
  * Returns list of { from, to, amount } transactions that settle all debts.
  */
 export function settleDebts(
-  netMap: Record<string, number>
+  netMap: Record<string, number>,
 ): { from: string; to: string; amount: number }[] {
   const balances = Object.entries(netMap)
     .map(([user, amount]) => ({ user, amount }))

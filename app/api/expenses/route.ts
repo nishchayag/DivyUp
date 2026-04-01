@@ -43,7 +43,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { title, amount, paidById, splitBetweenIds, groupId } = parsed.data;
+  const {
+    title,
+    amount,
+    currency,
+    paidById,
+    splitBetweenIds,
+    splitMode,
+    splitShares,
+    recurrence,
+    category,
+    notes,
+    groupId,
+  } = parsed.data;
 
   await dbConnect();
 
@@ -95,8 +107,22 @@ export async function POST(req: NextRequest) {
   const expense = await Expense.create({
     title,
     amount,
+    currency: currency || group.currency || "USD",
+    category,
+    notes,
     paidBy: paidById,
     splitBetween: splitBetweenIds,
+    splitMode,
+    splitShares,
+    recurrence: recurrence?.enabled
+      ? {
+          enabled: true,
+          frequency: recurrence.frequency || "monthly",
+          nextRunAt: recurrence.nextRunAt
+            ? new Date(recurrence.nextRunAt)
+            : undefined,
+        }
+      : { enabled: false },
     group: groupId,
   });
 

@@ -10,6 +10,8 @@ import { enforceRateLimit } from "@/lib/rateLimit";
 import { resolveTenantContext } from "@/lib/tenant";
 import { logAuditEvent } from "@/lib/audit";
 
+type IdLike = { toString: () => string };
+
 /**
  * GET /api/expenses/[id]
  * Get a single expense by ID.
@@ -46,6 +48,7 @@ export async function GET(
   const expense = await Expense.findById(params.id)
     .populate("paidBy", "name email image")
     .populate("splitBetween", "name email image")
+    .populate("comments.user", "name email image")
     .populate("group", "name members")
     .lean();
 
@@ -59,7 +62,8 @@ export async function GET(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const group = await Group.findById((expense.group as any)._id);
+  const expenseGroupId = (expense.group as { _id: IdLike })._id.toString();
+  const group = await Group.findById(expenseGroupId);
   if (!group) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
@@ -69,7 +73,7 @@ export async function GET(
   }
 
   const isMember = group.members.some(
-    (m: any) => m.toString() === user._id.toString(),
+    (m) => m.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -144,7 +148,7 @@ export async function PATCH(
   }
 
   const isMember = group.members.some(
-    (m: any) => m.toString() === user._id.toString(),
+    (m) => m.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -152,12 +156,48 @@ export async function PATCH(
   }
 
   // Update expense
-  const { title, amount, paidById, splitBetweenIds } = result.data;
+  const {
+    title,
+    amount,
+    currency,
+    paidById,
+    splitBetweenIds,
+    splitMode,
+    splitShares,
+    category,
+    notes,
+    status,
+    recurrence,
+  } = result.data;
 
   if (title) expense.title = title;
   if (amount !== undefined) expense.amount = amount;
-  if (paidById) expense.paidBy = paidById as any;
-  if (splitBetweenIds) expense.splitBetween = splitBetweenIds as any;
+  if (currency) expense.currency = currency;
+  if (category !== undefined) expense.category = category;
+  if (notes !== undefined) expense.notes = notes;
+  if (paidById) expense.paidBy = paidById as unknown as typeof expense.paidBy;
+  if (splitBetweenIds)
+    expense.splitBetween =
+      splitBetweenIds as unknown as typeof expense.splitBetween;
+  if (splitMode) expense.splitMode = splitMode;
+  if (splitShares) {
+    expense.splitShares = splitShares as unknown as typeof expense.splitShares;
+  }
+  if (recurrence) {
+    const resolvedFrequency =
+      recurrence.frequency ?? expense.recurrence?.frequency ?? "monthly";
+    expense.recurrence = {
+      enabled: recurrence.enabled,
+      frequency: resolvedFrequency,
+      nextRunAt: recurrence.nextRunAt
+        ? new Date(recurrence.nextRunAt)
+        : undefined,
+    };
+  }
+  if (status) {
+    expense.status = status;
+    expense.settledAt = status === "settled" ? new Date() : undefined;
+  }
 
   await expense.save();
 
@@ -171,6 +211,7 @@ export async function PATCH(
   const updatedExpense = await Expense.findById(params.id)
     .populate("paidBy", "name email image")
     .populate("splitBetween", "name email image")
+    .populate("comments.user", "name email image")
     .lean();
 
   return NextResponse.json({ expense: updatedExpense });
@@ -230,7 +271,7 @@ export async function DELETE(
   }
 
   const isMember = group.members.some(
-    (m: any) => m.toString() === user._id.toString(),
+    (m) => m.toString() === user._id.toString(),
   );
 
   if (!isMember) {

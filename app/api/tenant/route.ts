@@ -23,6 +23,7 @@ export async function GET() {
       id: ctx.user._id.toString(),
       name: ctx.user.name,
       email: ctx.user.email,
+      image: ctx.user.image,
       role: ctx.membership.role,
       isPlatformAdmin: !!ctx.user.isPlatformAdmin,
     },

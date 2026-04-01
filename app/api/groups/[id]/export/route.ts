@@ -7,6 +7,21 @@ import Expense from "@/models/Expense";
 import { enforceRateLimit } from "@/lib/rateLimit";
 import { resolveTenantContext } from "@/lib/tenant";
 
+type IdLike = { toString: () => string };
+
+interface ExportMember {
+  email?: string;
+  name?: string;
+}
+
+interface ExportExpense {
+  createdAt: Date | string;
+  title: string;
+  amount: number;
+  paidBy?: ExportMember;
+  splitBetween?: ExportMember[];
+}
+
 function toCsv(value: string | number) {
   const str = String(value);
   const escaped = str.replace(/"/g, '""');
@@ -15,7 +30,7 @@ function toCsv(value: string | number) {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   const rateLimited = enforceRateLimit(req, {
     bucket: "groups:export",
@@ -37,7 +52,10 @@ export async function GET(
     return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
   }
 
-  const group = await Group.findById(params.id).populate("members", "name email");
+  const group = await Group.findById(params.id).populate(
+    "members",
+    "name email",
+  );
   if (!group) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
@@ -46,7 +64,9 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const isMember = group.members.some((m: any) => m._id.toString() === ctx.user._id.toString());
+  const isMember = group.members.some(
+    (m: { _id: IdLike }) => m._id.toString() === ctx.user._id.toString(),
+  );
   if (!isMember) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -59,18 +79,23 @@ export async function GET(
 
   const rows = [
     ["Date", "Title", "Amount", "Paid By", "Split Between"],
-    ...expenses.map((expense: any) => [
-      new Date(expense.createdAt).toISOString(),
-      expense.title,
-      expense.amount,
-      expense.paidBy?.email || expense.paidBy?.name || "Unknown",
-      (expense.splitBetween || [])
-        .map((m: any) => m.email || m.name || "Unknown")
+    ...expenses.map((expense) => {
+      const rowExpense = expense as unknown as ExportExpense;
+      return [
+      new Date(rowExpense.createdAt).toISOString(),
+      rowExpense.title,
+      rowExpense.amount,
+      rowExpense.paidBy?.email || rowExpense.paidBy?.name || "Unknown",
+      (rowExpense.splitBetween || [])
+        .map((m: ExportMember) => m.email || m.name || "Unknown")
         .join(" | "),
-    ]),
+      ];
+    }),
   ];
 
-  const csv = rows.map((row) => row.map((cell) => toCsv(cell)).join(",")).join("\n");
+  const csv = rows
+    .map((row) => row.map((cell) => toCsv(cell)).join(","))
+    .join("\n");
 
   return new NextResponse(csv, {
     status: 200,

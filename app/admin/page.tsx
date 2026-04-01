@@ -36,13 +36,17 @@ export default function AdminPage() {
         const auditPayload = await auditRes.json();
 
         if (!metricsRes.ok) {
-          throw new Error(metricsPayload.error || "Failed to load admin metrics");
+          throw new Error(
+            metricsPayload.error || "Failed to load admin metrics",
+          );
         }
 
         setMetrics(metricsPayload.metrics);
         setEvents(auditRes.ok ? auditPayload.events || [] : []);
-      } catch (err: any) {
-        setError(err.message || "Failed to load admin dashboard");
+      } catch (err: unknown) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load admin dashboard",
+        );
       }
     };
 
@@ -74,12 +78,13 @@ export default function AdminPage() {
 
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {statCards.map((item) => (
-          <div
-            key={item.label}
-            className="surface-card rounded-2xl p-5"
-          >
-            <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{item.label}</p>
-            <p className="text-3xl font-extrabold text-slate-900 dark:text-white mt-2">{item.value}</p>
+          <div key={item.label} className="surface-card rounded-2xl p-5">
+            <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {item.label}
+            </p>
+            <p className="text-3xl font-extrabold text-slate-900 dark:text-white mt-2">
+              {item.value}
+            </p>
           </div>
         ))}
       </section>
@@ -100,8 +105,13 @@ export default function AdminPage() {
                 <span className="inline-flex rounded-full px-2 py-0.5 text-xs bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300 mr-2">
                   {event.entityType}
                 </span>
-                <span className="font-medium text-slate-900 dark:text-white">{event.action}</span>
-                <span className="text-slate-500 dark:text-slate-400"> · {new Date(event.createdAt).toLocaleString()}</span>
+                <span className="font-medium text-slate-900 dark:text-white">
+                  {event.action}
+                </span>
+                <span className="text-slate-500 dark:text-slate-400">
+                  {" "}
+                  · {new Date(event.createdAt).toLocaleString()}
+                </span>
               </div>
             ))}
           </div>

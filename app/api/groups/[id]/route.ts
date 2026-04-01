@@ -10,6 +10,8 @@ import { enforceRateLimit } from "@/lib/rateLimit";
 import { hasRequiredRole, resolveTenantContext } from "@/lib/tenant";
 import { logAuditEvent } from "@/lib/audit";
 
+type IdLike = { toString: () => string };
+
 /**
  * GET /api/groups/[id]
  * Returns group details + expenses. Only accessible to group members.
@@ -52,7 +54,8 @@ export async function GET(
   }
 
   if (
-    (group as any).organization?.toString() !== ctx.organization._id.toString()
+    (group as { organization?: IdLike }).organization?.toString() !==
+    ctx.organization._id.toString()
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -64,7 +67,7 @@ export async function GET(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const isMember = (group.members as any[]).some(
+  const isMember = (group.members as { _id: IdLike }[]).some(
     (m) => m._id.toString() === user._id.toString(),
   );
 
@@ -82,7 +85,8 @@ export async function GET(
   // Add creator as string for comparison in frontend
   const groupWithCreator = {
     ...group,
-    creator: (group as any).creator?.toString(),
+    creator: (group as { creator?: IdLike }).creator?.toString(),
+    currency: (group as { currency?: string }).currency || "USD",
   };
 
   return NextResponse.json({ group: groupWithCreator, expenses });
@@ -153,9 +157,10 @@ export async function PATCH(
     );
   }
 
-  const { name, description } = result.data;
+  const { name, description, currency } = result.data;
   if (name) group.name = name;
   if (description !== undefined) group.description = description;
+  if (currency) group.currency = currency;
 
   await group.save();
 

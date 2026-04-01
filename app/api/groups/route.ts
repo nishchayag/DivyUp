@@ -3,11 +3,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import dbConnect from "@/lib/mongoose";
 import Group from "@/models/Group";
+import Expense from "@/models/Expense";
 import User from "@/models/User";
 import { createGroupSchema } from "@/lib/validations";
 import { enforceRateLimit } from "@/lib/rateLimit";
 import { checkUsageLimit, resolveTenantContext } from "@/lib/tenant";
 import { logAuditEvent } from "@/lib/audit";
+import { calculateNetBalances } from "@/utils/calcBalances";
 
 /**
  * GET /api/groups
@@ -43,7 +45,47 @@ export async function GET() {
     .populate("members", "name email image")
     .lean();
 
-  return NextResponse.json({ groups });
+  const groupIds = groups.map((g) => g._id);
+  const openExpenses = await Expense.find({
+    group: { $in: groupIds },
+    status: { $ne: "settled" },
+  }).lean();
+
+  const expensesByGroup = new Map<string, typeof openExpenses>();
+  for (const expense of openExpenses) {
+    const key = expense.group.toString();
+    const existing = expensesByGroup.get(key) || [];
+    existing.push(expense);
+    expensesByGroup.set(key, existing);
+  }
+
+  const groupsWithBalances = groups.map((group) => {
+    const groupCurrency = group.currency || "USD";
+    const memberIds = (group.members as Array<{ _id: { toString: () => string } }>).map((m) =>
+      m._id.toString(),
+    );
+    const calcExpenses = (expensesByGroup.get(group._id.toString()) || [])
+      .filter((e) => !e.currency || e.currency === groupCurrency)
+      .map((e) => ({
+        amount: e.amount,
+        paidBy: e.paidBy.toString(),
+        splitBetween: e.splitBetween.map((id) => id.toString()),
+        splitMode: e.splitMode,
+        splitShares: e.splitShares?.map((share) => ({
+          userId: share.userId.toString(),
+          percentage: share.percentage,
+        })),
+      }));
+    const netMap = calculateNetBalances(calcExpenses, memberIds);
+
+    return {
+      ...group,
+      currency: groupCurrency,
+      netBalance: netMap[user._id.toString()] || 0,
+    };
+  });
+
+  return NextResponse.json({ groups: groupsWithBalances });
 }
 
 /**
@@ -107,7 +149,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const { name, description, memberEmails } = parsed.data;
+  const { name, description, memberEmails, currency } = parsed.data;
 
   // Start with creator as member
   const members = [creator._id];
@@ -125,6 +167,7 @@ export async function POST(req: NextRequest) {
   const group = await Group.create({
     name,
     description,
+    currency,
     organization: ctx.organization._id,
     members,
     creator: creator._id,

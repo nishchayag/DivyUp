@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useSession, signOut } from "next-auth/react";
 import { useState } from "react";
 import { ThemeToggle } from "./ThemeProvider";
@@ -31,6 +32,14 @@ export default function Navbar() {
           >
             Pricing
           </Link>
+          {session?.user && (
+            <Link
+              href="/notifications"
+              className="hidden sm:inline text-sm text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
+            >
+              Notifications
+            </Link>
+          )}
 
           <ThemeToggle />
 
@@ -43,10 +52,13 @@ export default function Navbar() {
                 className="flex items-center gap-2 p-1 pr-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-800/70 hover:bg-white dark:hover:bg-slate-800 transition-colors"
               >
                 {session.user.image ? (
-                  <img
+                  <Image
                     src={session.user.image}
                     alt={session.user.name || "User"}
                     className="w-8 h-8 rounded-lg"
+                    width={32}
+                    height={32}
+                    unoptimized
                   />
                 ) : (
                   <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center text-white text-sm font-medium">
@@ -107,7 +119,7 @@ export default function Navbar() {
                     >
                       Settings & Billing
                     </Link>
-                    {(session.user as any).isPlatformAdmin && (
+                    {session.user.isPlatformAdmin && (
                       <Link
                         href="/admin"
                         onClick={() => setShowDropdown(false)}

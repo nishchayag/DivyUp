@@ -6,14 +6,20 @@ import Subscription from "@/models/Subscription";
 import Group from "@/models/Group";
 import Expense from "@/models/Expense";
 import { PLAN_LIMITS, PlanLimitKey } from "@/lib/plans";
+import { IUser } from "@/models/User";
+import { IOrganization } from "@/models/Organization";
+import { IMembership } from "@/models/Membership";
+import { ISubscription } from "@/models/Subscription";
 
 export interface TenantContext {
-  user: any;
-  organization: any;
-  membership: any;
-  subscription: any;
+  user: IUser;
+  organization: IOrganization;
+  membership: IMembership;
+  subscription: ISubscription;
   plan: "free" | "pro";
 }
+
+type IdLike = { toString: () => string };
 
 function slugifyOrganizationName(name: string): string {
   return name
@@ -41,7 +47,7 @@ async function createUniqueOrgSlug(base: string): Promise<string> {
   return `${normalizedBase}-${Date.now()}`;
 }
 
-export async function ensureOrganizationForUser(user: any) {
+export async function ensureOrganizationForUser(user: IUser) {
   if (user.activeOrganization) {
     const org = await Organization.findById(user.activeOrganization);
     if (org) {
@@ -54,9 +60,11 @@ export async function ensureOrganizationForUser(user: any) {
   }).populate("organization");
 
   if (existingMembership?.organization) {
-    user.activeOrganization = (existingMembership.organization as any)._id;
+    user.activeOrganization = (
+      existingMembership.organization as { _id: IdLike }
+    )._id as unknown as IUser["activeOrganization"];
     await user.save();
-    return existingMembership.organization;
+    return existingMembership.organization as unknown as IOrganization;
   }
 
   const baseSlug = slugifyOrganizationName(
@@ -179,7 +187,7 @@ export async function checkUsageLimit(ctx: TenantContext, key: PlanLimitKey) {
   const groups = await Group.find({ organization: ctx.organization._id })
     .select("_id")
     .lean();
-  const groupIds = groups.map((g: any) => g._id);
+  const groupIds = groups.map((g: { _id: IdLike }) => g._id);
 
   const monthlyExpenses = await Expense.countDocuments({
     group: { $in: groupIds },

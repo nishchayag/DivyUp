@@ -11,7 +11,9 @@ interface Group {
   _id: string;
   name: string;
   description?: string;
-  members: { _id: string; name: string }[];
+  currency?: string;
+  netBalance?: number;
+  members: { _id: string; name: string; image?: string }[];
 }
 
 // Landing page for unauthenticated users
@@ -36,10 +38,7 @@ function LandingPage() {
           everyone on the same page. No more spreadsheets or mental math.
         </p>
         <div className="flex flex-col sm:flex-row gap-4">
-          <Link
-            href="/auth/signup"
-            className="brand-button px-8 py-4 text-lg"
-          >
+          <Link href="/auth/signup" className="brand-button px-8 py-4 text-lg">
             Start Splitting Free →
           </Link>
           <Link
@@ -125,10 +124,7 @@ function LandingPage() {
         <p className="text-slate-600 dark:text-slate-300 mb-8">
           Join thousands of groups already using DivyUp.
         </p>
-        <Link
-          href="/auth/signup"
-          className="brand-button px-8 py-4 text-lg"
-        >
+        <Link href="/auth/signup" className="brand-button px-8 py-4 text-lg">
           Get Started — It&apos;s Free
         </Link>
       </section>
@@ -173,7 +169,9 @@ function StepCard({
       <h3 className="font-display text-lg font-semibold text-slate-900 dark:text-white mb-1">
         {title}
       </h3>
-      <p className="text-sm text-slate-600 dark:text-slate-300">{description}</p>
+      <p className="text-sm text-slate-600 dark:text-slate-300">
+        {description}
+      </p>
     </div>
   );
 }
@@ -181,14 +179,18 @@ function StepCard({
 function MetricChip({ label, value }: { label: string; value: string }) {
   return (
     <div className="surface-card rounded-xl px-4 py-3 text-left">
-      <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="text-xl font-bold text-slate-900 dark:text-white">{value}</p>
+      <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        {label}
+      </p>
+      <p className="text-xl font-bold text-slate-900 dark:text-white">
+        {value}
+      </p>
     </div>
   );
 }
 
 export default function HomePage() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -207,8 +209,8 @@ export default function HomePage() {
       if (!res.ok) throw new Error("Failed to fetch groups");
       const data = await res.json();
       setGroups(data.groups || []);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to fetch groups");
     } finally {
       setLoading(false);
     }

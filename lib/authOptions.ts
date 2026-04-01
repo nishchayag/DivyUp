@@ -9,7 +9,7 @@ import Subscription from "@/models/Subscription";
 import { ensureOrganizationForUser } from "@/lib/tenant";
 
 // Build providers array dynamically
-const providers: any[] = [
+const providers: NextAuthOptions["providers"] = [
   CredentialsProvider({
     name: "Credentials",
     credentials: {
@@ -39,7 +39,7 @@ const providers: any[] = [
 
       // Return user object for the JWT
       return {
-        id: (user._id as any).toString(),
+        id: user._id.toString(),
         name: user.name,
         email: user.email,
         image: user.image,
@@ -88,8 +88,11 @@ export const authOptions: NextAuthOptions = {
 
         token.id = foundUser._id.toString();
         token.organizationId = org._id.toString();
-        token.role = (membership?.role || "member") as any;
-        token.plan = (subscription?.plan || "free") as any;
+        token.role = (membership?.role || "member") as
+          | "owner"
+          | "admin"
+          | "member";
+        token.plan = (subscription?.plan || "free") as "free" | "pro";
         token.isPlatformAdmin = !!foundUser.isPlatformAdmin;
         token.name = foundUser.name;
         token.email = foundUser.email;
@@ -110,9 +113,15 @@ export const authOptions: NextAuthOptions = {
 
           token.id = foundUser._id.toString();
           token.organizationId = org._id.toString();
-          token.role = (membership?.role || "member") as any;
-          token.plan = (subscription?.plan || "free") as any;
+          token.role = (membership?.role || "member") as
+            | "owner"
+            | "admin"
+            | "member";
+          token.plan = (subscription?.plan || "free") as "free" | "pro";
           token.isPlatformAdmin = !!foundUser.isPlatformAdmin;
+          token.name = foundUser.name;
+          token.email = foundUser.email;
+          token.picture = foundUser.image;
         }
       }
 
@@ -120,11 +129,14 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       if (token && session.user) {
-        (session.user as any).id = token.id;
-        (session.user as any).organizationId = token.organizationId;
-        (session.user as any).role = token.role;
-        (session.user as any).plan = token.plan;
-        (session.user as any).isPlatformAdmin = token.isPlatformAdmin;
+        session.user.id = token.id;
+        session.user.organizationId = token.organizationId;
+        session.user.role = token.role;
+        session.user.plan = token.plan;
+        session.user.isPlatformAdmin = token.isPlatformAdmin;
+        session.user.name = token.name || session.user.name;
+        session.user.email = token.email || session.user.email;
+        session.user.image = token.picture || session.user.image;
       }
       return session;
     },

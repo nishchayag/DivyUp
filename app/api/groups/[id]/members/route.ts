@@ -12,6 +12,8 @@ import {
 } from "@/lib/tenant";
 import { logAuditEvent } from "@/lib/audit";
 
+type IdLike = { toString: () => string };
+
 /**
  * POST /api/groups/[id]/members
  * Add a member to a group by email.
@@ -78,7 +80,7 @@ export async function POST(
   }
 
   const isCurrentUserMember = group.members.some(
-    (m: any) => m.toString() === currentUser._id.toString(),
+    (m: IdLike) => m.toString() === currentUser._id.toString(),
   );
 
   if (!isCurrentUserMember) {
@@ -103,7 +105,7 @@ export async function POST(
 
   // Check if already a member
   const isAlreadyMember = group.members.some(
-    (m: any) => m.toString() === userToAdd._id.toString(),
+    (m: IdLike) => m.toString() === userToAdd._id.toString(),
   );
 
   if (isAlreadyMember) {
@@ -183,7 +185,7 @@ export async function DELETE(
   }
 
   const isCurrentUserMember = group.members.some(
-    (m: any) => m.toString() === currentUser._id.toString(),
+    (m: IdLike) => m.toString() === currentUser._id.toString(),
   );
 
   if (!isCurrentUserMember) {
@@ -217,7 +219,7 @@ export async function DELETE(
 
   // Remove member
   group.members = group.members.filter(
-    (m: any) => m.toString() !== targetUserId,
+    (m: IdLike) => m.toString() !== targetUserId,
   );
 
   // If no members left, delete the group
