@@ -6,6 +6,11 @@ import Group from "@/models/Group";
 import Expense from "@/models/Expense";
 import User from "@/models/User";
 import { updateGroupSchema } from "@/lib/validations";
+import { enforceRateLimit } from "@/lib/rateLimit";
+import { hasRequiredRole, resolveTenantContext } from "@/lib/tenant";
+import { logAuditEvent } from "@/lib/audit";
+
+type IdLike = { toString: () => string };
 
 /**
  * GET /api/groups/[id]
@@ -15,6 +20,15 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "groups:read",
+    max: 120,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -22,6 +36,14 @@ export async function GET(
   }
 
   await dbConnect();
+
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
 
   const group = await Group.findById(params.id)
     .populate("members", "name email image")
@@ -31,6 +53,13 @@ export async function GET(
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
 
+  if (
+    (group as { organization?: IdLike }).organization?.toString() !==
+    ctx.organization._id.toString()
+  ) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   // Check membership
   const user = await User.findOne({ email: session.user.email });
 
@@ -38,7 +67,7 @@ export async function GET(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const isMember = (group.members as any[]).some(
+  const isMember = (group.members as { _id: IdLike }[]).some(
     (m) => m._id.toString() === user._id.toString(),
   );
 
@@ -56,7 +85,8 @@ export async function GET(
   // Add creator as string for comparison in frontend
   const groupWithCreator = {
     ...group,
-    creator: (group as any).creator?.toString(),
+    creator: (group as { creator?: IdLike }).creator?.toString(),
+    currency: (group as { currency?: string }).currency || "USD",
   };
 
   return NextResponse.json({ group: groupWithCreator, expenses });
@@ -70,6 +100,15 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "groups:update",
+    max: 40,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -85,6 +124,14 @@ export async function PATCH(
 
   await dbConnect();
 
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
+
   const group = await Group.findById(params.id);
   if (!group) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
@@ -95,19 +142,34 @@ export async function PATCH(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  // Only creator can update group details
-  if (group.creator.toString() !== user._id.toString()) {
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Allow creator, owner, or admin to update group metadata
+  if (
+    group.creator.toString() !== user._id.toString() &&
+    !hasRequiredRole(ctx.membership.role, ["admin"])
+  ) {
     return NextResponse.json(
-      { error: "Only the group creator can edit group details" },
+      { error: "Only admins or the group creator can edit group details" },
       { status: 403 },
     );
   }
 
-  const { name, description } = result.data;
+  const { name, description, currency } = result.data;
   if (name) group.name = name;
   if (description !== undefined) group.description = description;
+  if (currency) group.currency = currency;
 
   await group.save();
+
+  await logAuditEvent(req, ctx, {
+    action: "group.updated",
+    entityType: "group",
+    entityId: group._id.toString(),
+    metadata: { name: group.name },
+  });
 
   const updatedGroup = await Group.findById(params.id)
     .populate("members", "name email image")
@@ -124,6 +186,15 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "groups:delete",
+    max: 20,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -131,6 +202,14 @@ export async function DELETE(
   }
 
   await dbConnect();
+
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
 
   const group = await Group.findById(params.id);
   if (!group) {
@@ -142,10 +221,17 @@ export async function DELETE(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  // Only creator can delete group
-  if (group.creator.toString() !== user._id.toString()) {
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Only creator/owner can delete group
+  if (
+    group.creator.toString() !== user._id.toString() &&
+    !hasRequiredRole(ctx.membership.role, ["owner"])
+  ) {
     return NextResponse.json(
-      { error: "Only the group creator can delete the group" },
+      { error: "Only the group creator or owner can delete the group" },
       { status: 403 },
     );
   }
@@ -155,6 +241,12 @@ export async function DELETE(
 
   // Delete the group
   await Group.findByIdAndDelete(params.id);
+
+  await logAuditEvent(req, ctx, {
+    action: "group.deleted",
+    entityType: "group",
+    entityId: params.id,
+  });
 
   return NextResponse.json({ message: "Group deleted successfully" });
 }

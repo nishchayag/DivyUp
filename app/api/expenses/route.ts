@@ -5,13 +5,26 @@ import dbConnect from "@/lib/mongoose";
 import Expense from "@/models/Expense";
 import Group from "@/models/Group";
 import User from "@/models/User";
+import { createExpenseSchema } from "@/lib/validations";
+import { enforceRateLimit } from "@/lib/rateLimit";
+import { checkUsageLimit, resolveTenantContext } from "@/lib/tenant";
+import { logAuditEvent } from "@/lib/audit";
 
 /**
  * POST /api/expenses
  * Create a new expense within a group.
- * Body: { title, amount, paidById, splitBetweenIds, groupId, category?, expenseDate?, splitType?, splitDetails? }
+ * Body: { title, amount, paidById, splitBetweenIds, groupId }
  */
 export async function POST(req: NextRequest) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "expenses:create",
+    max: 80,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -19,64 +32,60 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
+  const parsed = createExpenseSchema.safeParse(body);
+  if (!parsed.success) {
+    const firstError = Object.values(
+      parsed.error.flatten().fieldErrors,
+    )[0]?.[0];
+    return NextResponse.json(
+      { error: firstError || "Invalid payload" },
+      { status: 400 },
+    );
+  }
+
   const {
     title,
     amount,
+    currency,
     paidById,
     splitBetweenIds,
-    groupId,
+    splitMode,
+    splitShares,
+    recurrence,
     category,
-    expenseDate,
-    splitType,
-    splitDetails,
-  } = body;
-
-  // Validate required fields
-  if (
-    !title ||
-    typeof amount !== "number" ||
-    !paidById ||
-    !Array.isArray(splitBetweenIds) ||
-    !groupId
-  ) {
-    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
-  }
-
-  // Validate splitDetails if provided
-  if (splitType === "exact" && splitDetails) {
-    const totalSplit = splitDetails.reduce(
-      (sum: number, d: { amount?: number }) => sum + (d.amount || 0),
-      0,
-    );
-    // Allow small rounding differences
-    if (Math.abs(totalSplit - amount) > 0.01) {
-      return NextResponse.json(
-        { error: "Split amounts must equal total amount" },
-        { status: 400 },
-      );
-    }
-  }
-
-  if (splitType === "percentage" && splitDetails) {
-    const totalPercent = splitDetails.reduce(
-      (sum: number, d: { percentage?: number }) => sum + (d.percentage || 0),
-      0,
-    );
-    if (Math.abs(totalPercent - 100) > 0.01) {
-      return NextResponse.json(
-        { error: "Percentages must total 100%" },
-        { status: 400 },
-      );
-    }
-  }
+    notes,
+    groupId,
+  } = parsed.data;
 
   await dbConnect();
+
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
+
+  const limit = await checkUsageLimit(ctx, "maxExpensesPerMonth");
+  if (!limit.allowed) {
+    return NextResponse.json(
+      {
+        error: `Monthly expense limit reached: ${limit.current}/${limit.limit}. Upgrade to Pro for higher limits.`,
+      },
+      { status: 402 },
+    );
+  }
 
   // Ensure group exists
   const group = await Group.findById(groupId);
 
   if (!group) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
+  }
+
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   // Check if user is a member
@@ -94,30 +103,35 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Create expense with optional fields
-  const expenseData: Record<string, unknown> = {
+  // Create expense
+  const expense = await Expense.create({
     title,
     amount,
+    currency: currency || group.currency || "USD",
+    category,
+    notes,
     paidBy: paidById,
     splitBetween: splitBetweenIds,
+    splitMode,
+    splitShares,
+    recurrence: recurrence?.enabled
+      ? {
+          enabled: true,
+          frequency: recurrence.frequency || "monthly",
+          nextRunAt: recurrence.nextRunAt
+            ? new Date(recurrence.nextRunAt)
+            : undefined,
+        }
+      : { enabled: false },
     group: groupId,
-    category: category || "other",
-    expenseDate: expenseDate ? new Date(expenseDate) : new Date(),
-    splitType: splitType || "equal",
-  };
+  });
 
-  // Add splitDetails if using custom split
-  if ((splitType === "exact" || splitType === "percentage") && splitDetails) {
-    expenseData.splitDetails = splitDetails.map(
-      (d: { userId: string; amount?: number; percentage?: number }) => ({
-        user: d.userId,
-        amount: d.amount,
-        percentage: d.percentage,
-      }),
-    );
-  }
-
-  const expense = await Expense.create(expenseData);
+  await logAuditEvent(req, ctx, {
+    action: "expense.created",
+    entityType: "expense",
+    entityId: expense._id.toString(),
+    metadata: { amount, groupId },
+  });
 
   return NextResponse.json({ expense }, { status: 201 });
 }

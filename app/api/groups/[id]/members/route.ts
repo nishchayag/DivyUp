@@ -4,6 +4,15 @@ import { authOptions } from "@/lib/authOptions";
 import dbConnect from "@/lib/mongoose";
 import Group from "@/models/Group";
 import User from "@/models/User";
+import { enforceRateLimit } from "@/lib/rateLimit";
+import {
+  checkUsageLimit,
+  hasRequiredRole,
+  resolveTenantContext,
+} from "@/lib/tenant";
+import { logAuditEvent } from "@/lib/audit";
+
+type IdLike = { toString: () => string };
 
 /**
  * POST /api/groups/[id]/members
@@ -11,8 +20,17 @@ import User from "@/models/User";
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "groups:members:add",
+    max: 40,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -28,9 +46,31 @@ export async function POST(
 
   await dbConnect();
 
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
+
+  const usage = await checkUsageLimit(ctx, "maxMembersPerGroup");
+  if (!usage.allowed) {
+    return NextResponse.json(
+      {
+        error: `Plan limit reached: ${usage.current}/${usage.limit} members. Upgrade to Pro for larger teams.`,
+      },
+      { status: 402 },
+    );
+  }
+
   const group = await Group.findById(params.id);
   if (!group) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
+  }
+
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   // Check if current user is a member (only members can add others)
@@ -40,11 +80,18 @@ export async function POST(
   }
 
   const isCurrentUserMember = group.members.some(
-    (m: any) => m.toString() === currentUser._id.toString()
+    (m: IdLike) => m.toString() === currentUser._id.toString(),
   );
 
   if (!isCurrentUserMember) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (!hasRequiredRole(ctx.membership.role, ["admin"])) {
+    return NextResponse.json(
+      { error: "Only owners/admins can add members" },
+      { status: 403 },
+    );
   }
 
   // Find the user to add
@@ -52,25 +99,32 @@ export async function POST(
   if (!userToAdd) {
     return NextResponse.json(
       { error: "User not found. They need to sign up first." },
-      { status: 404 }
+      { status: 404 },
     );
   }
 
   // Check if already a member
   const isAlreadyMember = group.members.some(
-    (m: any) => m.toString() === userToAdd._id.toString()
+    (m: IdLike) => m.toString() === userToAdd._id.toString(),
   );
 
   if (isAlreadyMember) {
     return NextResponse.json(
       { error: "User is already a member" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   // Add member
   group.members.push(userToAdd._id);
   await group.save();
+
+  await logAuditEvent(req, ctx, {
+    action: "group.member.added",
+    entityType: "group",
+    entityId: group._id.toString(),
+    metadata: { memberId: userToAdd._id.toString(), email: userToAdd.email },
+  });
 
   const updatedGroup = await Group.findById(params.id)
     .populate("members", "name email image")
@@ -86,8 +140,17 @@ export async function POST(
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "groups:members:remove",
+    max: 40,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -99,9 +162,21 @@ export async function DELETE(
 
   await dbConnect();
 
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
+
   const group = await Group.findById(params.id);
   if (!group) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
+  }
+
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const currentUser = await User.findOne({ email: session.user.email });
@@ -110,7 +185,7 @@ export async function DELETE(
   }
 
   const isCurrentUserMember = group.members.some(
-    (m: any) => m.toString() === currentUser._id.toString()
+    (m: IdLike) => m.toString() === currentUser._id.toString(),
   );
 
   if (!isCurrentUserMember) {
@@ -121,11 +196,14 @@ export async function DELETE(
   let targetUserId = currentUser._id.toString();
 
   if (userIdToRemove && userIdToRemove !== currentUser._id.toString()) {
-    // Only creator can remove others
-    if (group.creator.toString() !== currentUser._id.toString()) {
+    // Only creator/admin can remove others
+    if (
+      group.creator.toString() !== currentUser._id.toString() &&
+      !hasRequiredRole(ctx.membership.role, ["admin"])
+    ) {
       return NextResponse.json(
-        { error: "Only the group creator can remove other members" },
-        { status: 403 }
+        { error: "Only admins or the group creator can remove other members" },
+        { status: 403 },
       );
     }
     targetUserId = userIdToRemove;
@@ -135,13 +213,13 @@ export async function DELETE(
   if (targetUserId === group.creator.toString() && group.members.length > 1) {
     return NextResponse.json(
       { error: "Cannot remove the group creator while other members exist" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   // Remove member
   group.members = group.members.filter(
-    (m: any) => m.toString() !== targetUserId
+    (m: IdLike) => m.toString() !== targetUserId,
   );
 
   // If no members left, delete the group
@@ -156,6 +234,13 @@ export async function DELETE(
   }
 
   await group.save();
+
+  await logAuditEvent(req, ctx, {
+    action: "group.member.removed",
+    entityType: "group",
+    entityId: group._id.toString(),
+    metadata: { removedUserId: targetUserId },
+  });
 
   const updatedGroup = await Group.findById(params.id)
     .populate("members", "name email image")

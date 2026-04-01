@@ -15,7 +15,7 @@ export async function getSession() {
  */
 export async function getCurrentUserId(): Promise<string | null> {
   const session = await getSession();
-  return (session?.user as any)?.id || null;
+  return session?.user?.id || null;
 }
 
 /**

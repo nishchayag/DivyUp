@@ -4,43 +4,26 @@
  * Input:
  *  - expenses: array of expenses where each expense has amount, paidBy (user id), splitBetween (array of user ids)
  *  - members: array of user ids participating in the group
- *  - settlements: array of recorded payments between members
  *
  * Output:
  *  - Map of userId -> net amount (positive means others owe this user; negative means this user owes others)
  */
 
-export type SplitType = "equal" | "exact" | "percentage";
-
-export type SplitDetailLike = {
-  user: string;
-  amount?: number;
-  percentage?: number;
-};
-
 export type ExpenseLike = {
   amount: number;
   paidBy: string;
   splitBetween: string[];
-  splitType?: SplitType;
-  splitDetails?: SplitDetailLike[];
-};
-
-export type SettlementLike = {
-  paidBy: string; // Who made the payment
-  paidTo: string; // Who received the payment
-  amount: number;
+  splitMode?: "equal" | "percentage";
+  splitShares?: { userId: string; percentage: number }[];
 };
 
 /**
- * Calculate net balances for each member based on expenses and settlements.
- * Supports equal, exact amount, and percentage-based splits.
- * Settlements reduce the debt between members.
+ * Calculate net balances for each member based on expenses.
+ * Assumes equal split between members in splitBetween array.
  */
 export function calculateNetBalances(
   expenses: ExpenseLike[],
   members: string[],
-  settlements: SettlementLike[] = [],
 ): Record<string, number> {
   const net: Record<string, number> = {};
 
@@ -48,47 +31,39 @@ export function calculateNetBalances(
   members.forEach((m) => (net[m] = 0));
 
   for (const expense of expenses) {
-    const totalAmount = Number(expense.amount || 0);
-    const splitType = expense.splitType || "equal";
+    if (!expense) continue;
+    const amount = Number(expense.amount || 0);
+    if (amount <= 0) continue;
+
+    const payerId = String(expense.paidBy || "");
+    if (!payerId) continue;
 
     // Payer gets credited full amount (they paid)
-    if (net[expense.paidBy] !== undefined) {
-      net[expense.paidBy] += totalAmount;
+    if (net[payerId] !== undefined) {
+      net[payerId] += amount;
     } else {
-      net[expense.paidBy] = totalAmount;
+      net[payerId] = amount;
     }
 
-    // Calculate each participant's share based on split type
-    const participants =
-      expense.splitBetween && expense.splitBetween.length
-        ? expense.splitBetween
-        : members;
-
-    if (splitType === "exact" && expense.splitDetails?.length) {
-      // Exact amounts specified per user
-      for (const detail of expense.splitDetails) {
-        const share = Number(detail.amount || 0);
-        if (net[detail.user] !== undefined) {
-          net[detail.user] -= share;
+    // Each participant owes by equal or percentage mode.
+    if (expense.splitMode === "percentage" && expense.splitShares?.length) {
+      for (const share of expense.splitShares) {
+        const userId = String(share.userId || "");
+        if (!userId) continue;
+        const owed = (amount * share.percentage) / 100;
+        if (net[userId] !== undefined) {
+          net[userId] -= owed;
         } else {
-          net[detail.user] = -share;
-        }
-      }
-    } else if (splitType === "percentage" && expense.splitDetails?.length) {
-      // Percentage-based split
-      for (const detail of expense.splitDetails) {
-        const percentage = Number(detail.percentage || 0);
-        const share = (totalAmount * percentage) / 100;
-        if (net[detail.user] !== undefined) {
-          net[detail.user] -= share;
-        } else {
-          net[detail.user] = -share;
+          net[userId] = -owed;
         }
       }
     } else {
-      // Equal split (default)
-      const splitCount = participants.length || 1;
-      const share = totalAmount / splitCount;
+      const participants =
+        expense.splitBetween && expense.splitBetween.length
+          ? expense.splitBetween.map((id) => String(id || "")).filter(Boolean)
+          : members;
+      if (!participants.length) continue;
+      const share = amount / participants.length;
 
       for (const userId of participants) {
         if (net[userId] !== undefined) {
@@ -97,22 +72,6 @@ export function calculateNetBalances(
           net[userId] = -share;
         }
       }
-    }
-  }
-
-  // Apply settlements: when A pays B, A's debt decreases (balance goes up)
-  // and B's credit decreases (balance goes down)
-  for (const settlement of settlements) {
-    const amount = Number(settlement.amount || 0);
-
-    // The person who paid reduces their debt (increases their balance)
-    if (net[settlement.paidBy] !== undefined) {
-      net[settlement.paidBy] += amount;
-    }
-
-    // The person who received reduces their credit (decreases their balance)
-    if (net[settlement.paidTo] !== undefined) {
-      net[settlement.paidTo] -= amount;
     }
   }
 

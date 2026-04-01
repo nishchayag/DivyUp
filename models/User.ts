@@ -5,6 +5,8 @@ export interface IUser extends Document {
   email: string;
   image?: string;
   passwordHash?: string;
+  activeOrganization?: mongoose.Types.ObjectId;
+  isPlatformAdmin?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -15,8 +17,10 @@ const UserSchema = new Schema<IUser>(
     email: { type: String, required: true, unique: true, index: true },
     image: { type: String },
     passwordHash: { type: String },
+    activeOrganization: { type: Schema.Types.ObjectId, ref: "Organization" },
+    isPlatformAdmin: { type: Boolean, default: false },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const User: Model<IUser> =

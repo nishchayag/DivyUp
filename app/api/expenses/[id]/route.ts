@@ -6,6 +6,11 @@ import Expense from "@/models/Expense";
 import Group from "@/models/Group";
 import User from "@/models/User";
 import { updateExpenseSchema } from "@/lib/validations";
+import { enforceRateLimit } from "@/lib/rateLimit";
+import { resolveTenantContext } from "@/lib/tenant";
+import { logAuditEvent } from "@/lib/audit";
+
+type IdLike = { toString: () => string };
 
 /**
  * GET /api/expenses/[id]
@@ -13,8 +18,17 @@ import { updateExpenseSchema } from "@/lib/validations";
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "expenses:read",
+    max: 180,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -23,9 +37,18 @@ export async function GET(
 
   await dbConnect();
 
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
+
   const expense = await Expense.findById(params.id)
     .populate("paidBy", "name email image")
     .populate("splitBetween", "name email image")
+    .populate("comments.user", "name email image")
     .populate("group", "name members")
     .lean();
 
@@ -39,13 +62,18 @@ export async function GET(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const group = await Group.findById((expense.group as any)._id);
+  const expenseGroupId = (expense.group as { _id: IdLike })._id.toString();
+  const group = await Group.findById(expenseGroupId);
   if (!group) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
 
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const isMember = group.members.some(
-    (m: any) => m.toString() === user._id.toString()
+    (m) => m.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -61,8 +89,17 @@ export async function GET(
  */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "expenses:update",
+    max: 100,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -76,11 +113,19 @@ export async function PATCH(
   if (!result.success) {
     return NextResponse.json(
       { error: result.error.flatten().fieldErrors },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   await dbConnect();
+
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
 
   const expense = await Expense.findById(params.id);
   if (!expense) {
@@ -98,8 +143,12 @@ export async function PATCH(
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
 
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const isMember = group.members.some(
-    (m: any) => m.toString() === user._id.toString()
+    (m) => m.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -107,18 +156,62 @@ export async function PATCH(
   }
 
   // Update expense
-  const { title, amount, paidById, splitBetweenIds } = result.data;
+  const {
+    title,
+    amount,
+    currency,
+    paidById,
+    splitBetweenIds,
+    splitMode,
+    splitShares,
+    category,
+    notes,
+    status,
+    recurrence,
+  } = result.data;
 
   if (title) expense.title = title;
   if (amount !== undefined) expense.amount = amount;
-  if (paidById) expense.paidBy = paidById as any;
-  if (splitBetweenIds) expense.splitBetween = splitBetweenIds as any;
+  if (currency) expense.currency = currency;
+  if (category !== undefined) expense.category = category;
+  if (notes !== undefined) expense.notes = notes;
+  if (paidById) expense.paidBy = paidById as unknown as typeof expense.paidBy;
+  if (splitBetweenIds)
+    expense.splitBetween =
+      splitBetweenIds as unknown as typeof expense.splitBetween;
+  if (splitMode) expense.splitMode = splitMode;
+  if (splitShares) {
+    expense.splitShares = splitShares as unknown as typeof expense.splitShares;
+  }
+  if (recurrence) {
+    const resolvedFrequency =
+      recurrence.frequency ?? expense.recurrence?.frequency ?? "monthly";
+    expense.recurrence = {
+      enabled: recurrence.enabled,
+      frequency: resolvedFrequency,
+      nextRunAt: recurrence.nextRunAt
+        ? new Date(recurrence.nextRunAt)
+        : undefined,
+    };
+  }
+  if (status) {
+    expense.status = status;
+    expense.settledAt = status === "settled" ? new Date() : undefined;
+  }
 
   await expense.save();
+
+  await logAuditEvent(req, ctx, {
+    action: "expense.updated",
+    entityType: "expense",
+    entityId: expense._id.toString(),
+    metadata: { groupId: group._id.toString() },
+  });
 
   const updatedExpense = await Expense.findById(params.id)
     .populate("paidBy", "name email image")
     .populate("splitBetween", "name email image")
+    .populate("comments.user", "name email image")
     .lean();
 
   return NextResponse.json({ expense: updatedExpense });
@@ -130,8 +223,17 @@ export async function PATCH(
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
+  const rateLimited = enforceRateLimit(req, {
+    bucket: "expenses:delete",
+    max: 60,
+    windowMs: 60_000,
+  });
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
@@ -139,6 +241,14 @@ export async function DELETE(
   }
 
   await dbConnect();
+
+  const ctx = await resolveTenantContext(session);
+  if (!ctx) {
+    return NextResponse.json(
+      { error: "Unable to resolve tenant" },
+      { status: 400 },
+    );
+  }
 
   const expense = await Expense.findById(params.id);
   if (!expense) {
@@ -156,8 +266,12 @@ export async function DELETE(
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
 
+  if (group.organization.toString() !== ctx.organization._id.toString()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const isMember = group.members.some(
-    (m: any) => m.toString() === user._id.toString()
+    (m) => m.toString() === user._id.toString(),
   );
 
   if (!isMember) {
@@ -165,6 +279,13 @@ export async function DELETE(
   }
 
   await Expense.findByIdAndDelete(params.id);
+
+  await logAuditEvent(req, ctx, {
+    action: "expense.deleted",
+    entityType: "expense",
+    entityId: params.id,
+    metadata: { groupId: group._id.toString() },
+  });
 
   return NextResponse.json({ message: "Expense deleted successfully" });
 }
